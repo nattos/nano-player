@@ -17,7 +17,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   @property() rowHeight = 42;
   @property() totalCount = 100;
   elementConstructor?: () => TElement;
-  elementDataSetter?: (element: TElement, data: TData|undefined) => void;
+  elementDataSetter?: (element: TElement, index: number, data: TData|undefined) => void;
   dataGetter?: (index: number) => TData|undefined;
 
   @observable viewportMinIndex = 0;
@@ -45,7 +45,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
       if (element === undefined) {
         continue;
       }
-      this.elementDataSetter?.(element, this.dataGetter?.(i));
+      this.elementDataSetter?.(element, i, this.dataGetter?.(i));
     }
   }
 
@@ -64,10 +64,11 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     element.style['position'] = 'absolute';
     element.style['height'] = `${this.rowHeight}px`;
     element.style['top'] = `${this.rowHeight * index}px`;
+    element.style['width'] = `100%`;
     this.contentArea.appendChild(element);
     this.elementsDisplayedMap.set(index, element);
 
-    this.elementDataSetter?.(element, this.dataGetter?.(index));
+    this.elementDataSetter?.(element, index, this.dataGetter?.(index));
     return element;
   }
 
@@ -386,6 +387,7 @@ class QueryParser {
 
 
 enum CmdSortTypes {
+  Title = 'title',
   Artist = 'artist',
   Genre = 'genre',
   Album = 'album',
@@ -399,18 +401,67 @@ enum CmdSettingsGroupCommands {
 
 @customElement('track-view')
 export class TrackView extends LitElement {
-  static styles = css``;
+  static styles = css`
+.row {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: 1em;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-evenly;
+  white-space: nowrap;
+}
+.col-index {
+  flex-grow: 1;
+  width: 0;
+  overflow:hidden;
+}
+.col-title {
+  flex-grow: 15;
+  width: 0;
+  overflow:hidden;
+}
+.col-artist {
+  flex-grow: 10;
+  width: 0;
+  overflow:hidden;
+}
+.col-album {
+  flex-grow: 10;
+  width: 0;
+  overflow:hidden;
+}
+.col-duration {
+  flex-grow: 2;
+  width: 0;
+  overflow:hidden;
+}
+.col-index-key {
+  flex-grow: 10;
+  width: 0;
+  overflow:hidden;
+}
+`;
 
+  @property() index = 0;
   @property() track?: Track;
 
   @action
   async clicked() {
-    NanoApp.instance?.playTrack(this.track);
+    NanoApp.instance?.doPlayTrack(this.index, this.track);
   }
 
   override render() {
     return html`
-<div @click=${this.clicked}>TRACK!!!!!! ${this.track?.path} -- ${this.track?.metadata?.artist} -- ${this.track?.metadata?.album} -- ${formatDuration(this.track?.metadata?.duration)}</div>
+<div class="row" @dblclick=${this.clicked}>
+  <div class="col-index">${this.index}</div>
+  <div class="col-title">${this.track?.metadata?.title}</div>
+  <div class="col-duration">${formatDuration(this.track?.metadata?.duration)}</div>
+  <div class="col-artist">${this.track?.metadata?.artist}</div>
+  <div class="col-album">${this.track?.metadata?.album}</div>
+  <div class="col-album">${this.track?.metadata?.trackNumber} / ${this.track?.metadata?.trackTotal}</div>
+</div>
     `;
   }
 }
@@ -420,10 +471,6 @@ export class NanoApp extends LitElement {
   static instance?: NanoApp;
 
   static styles = css`
-    :host {
-      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-      font-weight: 300;
-    }
   `;
 
   @property() something = 0;
@@ -431,8 +478,6 @@ export class NanoApp extends LitElement {
   @query('#search-query-textarea') searchQueryTextarea!: HTMLTextAreaElement;
   @query('#audio-player') audioElement!: HTMLAudioElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
-
-  public static init() {}
 
   private readonly commands: CommandSpec[] = [
     {
@@ -458,7 +503,7 @@ export class NanoApp extends LitElement {
               func: QueryParser.bindFunc(this.doLibraryPathsCmd, this, QueryParser.resolveEnumArg(CmdSettingsGroupCommands)),
             },
             {
-              // cmd:sort <artist|genre|album|library-order>
+              // cmd:sort <title|artist|genre|album|library-order>
               name: 'Sorts tracks',
               desc: 'Sorts library or playlist by chosen metadata.',
               atomPrefix: 'sort',
@@ -556,6 +601,18 @@ export class NanoApp extends LitElement {
           isRepeated: true,
           subcommands: [
             {
+              // title:<title>
+              name: 'Title',
+              desc: 'Filters by title.',
+              atomPrefix: 'title:',
+              argSpec: [
+                {
+                  isString: true,
+                }
+              ],
+              func: () => {},
+            },
+            {
               // artist:<artist>
               name: 'Artist',
               desc: 'Filters by artist.',
@@ -629,6 +686,9 @@ export class NanoApp extends LitElement {
       observe(this.trackListView, 'viewportMaxIndex', updateTracks);
       updateTracks();
 
+      autorun(() => { this.loadTrack(this.currentPlayTrack); });
+      autorun(() => { this.setLoadedTrackPlaying(this.isPlaying); });
+
       MediaIndexer.instance.start();
     });
   }
@@ -681,34 +741,126 @@ export class NanoApp extends LitElement {
     }
   }
 
+  @observable isPlaying = false;
+  @observable currentPlayTrack: Track|null = null;
+  private playCursor?: TrackCursor;
+  private playOpQueue = new OperationQueue();
+
   @action
   private doPlaySelected() {
   }
 
   @action
+  doPlayTrack(atIndex: number, track: Track|undefined) {
+    this.playOpQueue.push(async () => {
+      // TODO: Verify track matches.
+      await this.movePlayCursor(0, atIndex);
+      this.setPlayState(true);
+    });
+  }
+
+  private async movePlayCursor(delta: number, absPos?: number) {
+    if (!this.playCursor) {
+      this.playCursor = Database.instance.cursor('library', this.trackViewCursor?.sortContext ?? 'index', {});
+      this.playCursor.seek(delta >= 0 ? 0 : Infinity);
+    }
+    const firstResults = this.playCursor.peekRegion(0, 0);
+    if (firstResults.updatedResultsPromise) {
+      await firstResults.updatedResultsPromise;
+    }
+    let nextIndex;
+    if (absPos === undefined) {
+      nextIndex = this.playCursor.index + delta;
+    } else {
+      nextIndex = Math.max(0, Math.min(this.playCursor.trackCount, absPos)) + delta;
+    }
+    if (nextIndex >= this.playCursor.trackCount) {
+      nextIndex -= this.playCursor.trackCount;
+    }
+    if (nextIndex < 0) {
+      nextIndex += this.playCursor.trackCount;
+    }
+    this.playCursor.seek(nextIndex);
+
+    const secondResults = this.playCursor.peekRegion(0, 1);
+    let foundTrack: Track|undefined;
+    if (secondResults.updatedResultsPromise) {
+      const secondFetch = await secondResults.updatedResultsPromise;
+      for (const track of secondFetch.results) {
+        foundTrack = track;
+        break;
+      }
+    } else {
+      for (const track of secondResults.dirtyResults) {
+        foundTrack = track;
+        break;
+      }
+    }
+    runInAction(() => {
+      console.log(`currentPlayTrack: ${foundTrack?.path}`);
+      this.currentPlayTrack = foundTrack ?? null;
+    });
+  }
+
+  private setPlayState(isPlaying: boolean) {
+    runInAction(() => {
+      this.isPlaying = isPlaying;
+    });
+  }
+
+  private setPlayPosition(positionFraction: number) {
+  }
+
+  @action
   private doPlay() {
+    this.playOpQueue.push(async () => {
+      if (!this.currentPlayTrack) {
+        await this.movePlayCursor(0);
+      }
+      if (this.isPlaying) {
+        this.setPlayPosition(0);
+      } else {
+        this.setPlayState(true);
+      }
+    });
   }
 
   @action
   private doPause() {
+    this.playOpQueue.push(() => {
+      this.setPlayState(!this.isPlaying);
+    });
   }
 
   @action
   private doStop() {
+    this.playOpQueue.push(() => {
+      this.setPlayState(false);
+      this.setPlayPosition(0);
+    });
   }
 
   @action
   private doPreviousTrack() {
+    this.playOpQueue.push(async () => {
+      await this.movePlayCursor(-1);
+    });
   }
 
   @action
   private doNextTrack() {
+    this.playOpQueue.push(async () => {
+      await this.movePlayCursor(1);
+    });
   }
 
   @action
   private doSortList(sortType: CmdSortTypes) {
     let sortContext: SortContext|undefined = undefined;
     switch (sortType) {
+      case CmdSortTypes.Title:
+        sortContext = 'title';
+        break;
       case CmdSortTypes.Artist:
         sortContext = 'artist';
         break;
@@ -725,6 +877,9 @@ export class NanoApp extends LitElement {
     if (sortContext && this.trackViewCursor) {
       this.trackViewCursor.sortContext = sortContext;
       this.updateTrackDataInViewport();
+    }
+    if (sortContext && this.playCursor) {
+      this.playCursor.sortContext = sortContext;
     }
   }
 
@@ -866,7 +1021,7 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  async playTrack(track: Track|undefined) {
+  private async loadTrack(track: Track|undefined|null) {
     if (!track || !track.fileHandle) {
       return;
     }
@@ -883,10 +1038,24 @@ export class NanoApp extends LitElement {
     }
     try {
       const file = await track.fileHandle.getFile();
+      const wasPlaying = !this.audioElement.paused;
       this.audioElement.src = URL.createObjectURL(file);
+      this.setLoadedTrackPlaying(wasPlaying);
     } catch (e) {
       console.error(e);
       this.audioElement.src = '';
+    }
+  }
+
+  @action
+  private setLoadedTrackPlaying(isPlaying: boolean) {
+    if (this.audioElement.paused === !isPlaying) {
+      return;
+    }
+    if (isPlaying) {
+      this.audioElement.play();
+    } else {
+      this.audioElement.pause();
     }
   }
 
@@ -924,7 +1093,10 @@ export class NanoApp extends LitElement {
     super.updated(changedProperties);
 
     this.trackListView!.elementConstructor = () => new TrackView();
-    this.trackListView!.elementDataSetter = (trackView, track) => trackView.track = track;
+    this.trackListView!.elementDataSetter = (trackView, index, track) => {
+      trackView.index = index;
+      trackView.track = track;
+    };
     this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
     this.trackListView.ready();
   }
@@ -944,6 +1116,7 @@ interface Track {
 }
 
 interface TrackMetadata {
+  title?: string;
   artist?: string;
   album?: string;
   genre?: string;
@@ -989,13 +1162,14 @@ const INDEXED_FILES_PATTERN = /^.*\.(mp3|flac|m4a|wav|aif[f]?|mov|mp[e]?g)$/;
 
 type SearchTableName = 'search-table-a'|'search-table-b';
 type SearchResultStatus = 'no_query'|'partial'|'ready';
-type QueryTokenContext = 'all'|'artist'|'album'|'genre'|'index';
-type SortContext = 'artist'|'album'|'genre'|'index';
+type QueryTokenContext = 'all'|'title'|'artist'|'album'|'genre'|'index';
+type SortContext = 'title'|'artist'|'album'|'genre'|'index';
 type UpdateMode = 'create_only'|'upsert'|'update_only';
 
-const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = ['all','artist','album','genre','index'];
-const ALL_SORT_CONTEXTS: SortContext[] = ['artist','album','genre','index'];
+const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = ['all','title','artist','album','genre','index'];
+const ALL_SORT_CONTEXTS: SortContext[] = ['title','artist','album','genre','index'];
 const SORT_CONTEXTS_TO_METADATA_PATH = {
+  'title': 'metadata.title',
   'artist': 'metadata.artist',
   'album': 'metadata.album',
   'genre': 'metadata.genre',
@@ -1203,6 +1377,7 @@ class MediaIndexer {
           artist: tags?.tags?.artist,
           album: tags?.tags?.album,
           genre: tags?.tags?.genre,
+          title: tags?.tags?.title,
           trackNumber: trackNumber,
           trackTotal: trackTotal,
           // diskNumber: ???,
@@ -1274,6 +1449,7 @@ class TrackCursor {
 
   private databaseDirty = true;
   private currentIndex = 0;
+  private cachedTrackCount = 0;
 
   private readonly cachedBlocks = new LruCache<number, Track[]>(TrackCursor.cachedBlockCount);
   private readonly fetchesInFlight = new Map<number, Promise<Track[]>>();
@@ -1315,6 +1491,10 @@ class TrackCursor {
     return this.currentIndex;
   }
 
+  get trackCount() {
+    return this.cachedTrackCount;
+  }
+
   setAnchor(anchor: TrackPositionAnchor) {
     this.anchor = anchor;
   }
@@ -1328,37 +1508,73 @@ class TrackCursor {
   peekRegion(startDelta: number, endDelta: number): TrackPeekResult {
     this.checkDatabaseDirty();
 
-    const startIndex = this.currentIndex + startDelta;
-    const endIndex = this.currentIndex + endDelta;
-    const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
-    const endBlock = TrackCursor.indexToBlock(endIndex);
-
     const databaseDirty = this.databaseDirty;
     this.databaseDirty = false;
 
+    let reanchorFromPos = this.currentIndex;
+    let currentFromPos = this.currentIndex;
+    if (currentFromPos === Infinity || currentFromPos >= this.cachedTrackCount) {
+      currentFromPos = this.cachedTrackCount - 1;
+    }
+    if (currentFromPos < 0) {
+      currentFromPos = 0;
+    }
+
     const missingBlocks: number[] = [];
     const regionBlocks: Array<Track[]|undefined> = [];
-    for (let blockNumber = startBlock; blockNumber <= endBlock; ++blockNumber) {
-      const cachedBlock = this.cachedBlocks.get(blockNumber);
-      if (cachedBlock === undefined) {
-        missingBlocks.push(blockNumber);
+    let dirtyResultsGenerator;
+    {
+      const startIndex = currentFromPos + startDelta;
+      const endIndex = currentFromPos + endDelta;
+      const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
+      const endBlock = TrackCursor.indexToBlock(endIndex);
+
+      for (let blockNumber = startBlock; blockNumber <= endBlock; ++blockNumber) {
+        const cachedBlock = this.cachedBlocks.get(blockNumber);
+        if (cachedBlock === undefined) {
+          missingBlocks.push(blockNumber);
+        }
+        regionBlocks.push(cachedBlock);
       }
-      regionBlocks.push(cachedBlock);
+
+      dirtyResultsGenerator = this.tracksFromRegionBlocksGenerator(regionBlocks, startBlock, startIndex, endIndex);
+
+      if (databaseDirty) {
+        // TODO: Handle this.databaseDirty better.
+        this.cachedBlocks.clear();
+      }
     }
 
-    const dirtyResultsGenerator = this.tracksFromRegionBlocksGenerator(regionBlocks, startBlock, startIndex, endIndex);
-
+    let trackCountPromise: Promise<number|undefined>;
     if (databaseDirty) {
-      // TODO: Handle this.databaseDirty better.
-      this.cachedBlocks.clear();
+      trackCountPromise = (async () => {
+        let updatedTrackCount = await this.database.countTracks({ source: 'auto', sortContext: this.sortContext });
+        this.cachedTrackCount = updatedTrackCount;
+        return updatedTrackCount;
+      })();
+    } else {
+      trackCountPromise = Promise.resolve(undefined);
     }
 
-    const updateBlocksPromise = missingBlocks.length <= 0 && !databaseDirty ? undefined : (async () => {
+    const updateBlocksPromise = missingBlocks.length <= 0 && !databaseDirty ? undefined : trackCountPromise.then(async (updatedTrackCount) => {
       let updatedBlocks = Array.from(regionBlocks);
       if (databaseDirty) {
         // TODO: Handle this.databaseDirty better.
         updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
+
+        if (reanchorFromPos === Infinity || reanchorFromPos >= this.cachedTrackCount) {
+          reanchorFromPos = this.cachedTrackCount - 1;
+        }
+        if (reanchorFromPos < 0) {
+          reanchorFromPos = 0;
+        }
+        this.currentIndex = reanchorFromPos;
       }
+
+      const startIndex = reanchorFromPos + startDelta;
+      const endIndex = reanchorFromPos + endDelta;
+      const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
+      const endBlock = TrackCursor.indexToBlock(endIndex);
 
       const fetchPromises = [];
       let blockIndex = 0;
@@ -1389,16 +1605,11 @@ class TrackCursor {
       await Promise.all(fetchPromises);
       const generator = this.tracksFromRegionBlocksGenerator(updatedBlocks, startBlock, startIndex, endIndex);
 
-      let updatedTrackCount = undefined;
-      if (databaseDirty) {
-        updatedTrackCount = await this.database.countTracks({ source: 'auto', sortContext: this.sortContext });
-      }
-
       return {
         results: generator,
         count: updatedTrackCount,
       };
-    })();
+    });
 
     return {
       dirtyResults: dirtyResultsGenerator,
@@ -1706,13 +1917,15 @@ class Database {
       }
 
       const pathPrefixes = generatePrefixes(Database.getPathFilePath(track.path));
+      const titlePrefixes = generatePrefixes(track.metadata?.title);
       const artistPrefixes = generatePrefixes(track.metadata?.artist);
       const albumPrefixes = generatePrefixes(track.metadata?.album);
       const genrePrefixes = generatePrefixes(track.metadata?.genre);
       const indexPrefixes = generatePrefixes(track.generatedMetadata?.librarySortKey);
 
-      type QueryTokenContext = 'all'|'artist'|'album'|'genre'|'index';
-      insertForContext('all', [ pathPrefixes, artistPrefixes, albumPrefixes, genrePrefixes, indexPrefixes ]);
+      type QueryTokenContext = 'all'|'title'|'artist'|'album'|'genre'|'index';
+      insertForContext('all', [ pathPrefixes, titlePrefixes, artistPrefixes, albumPrefixes, genrePrefixes, indexPrefixes ]);
+      insertForContext('title', [ titlePrefixes ]);
       insertForContext('artist', [ artistPrefixes ]);
       insertForContext('album', [ albumPrefixes ]);
       insertForContext('genre', [ genrePrefixes ]);
@@ -1871,6 +2084,7 @@ class Database {
     const path = Database.getPathFilePath(track.path).toLocaleLowerCase();
     return queryTokens.every(token =>
         path.includes(token) ||
+        track.metadata?.title?.toLocaleLowerCase()?.includes(token) ||
         track.metadata?.artist?.toLocaleLowerCase()?.includes(token) ||
         track.metadata?.album?.toLocaleLowerCase()?.includes(token) ||
         track.metadata?.genre?.toLocaleLowerCase()?.includes(token) ||
@@ -2083,6 +2297,20 @@ class WaitableFlag {
 
   set() {
     this.flag.resolve();
+  }
+}
+
+class OperationQueue {
+  private head = Promise.resolve();
+
+  async push<TResult>(op: () => TResult | PromiseLike<TResult>): Promise<TResult> {
+    const result = new Resolvable<TResult>();
+    this.head = this.head.then(async () => {
+      result.resolve(await op());
+    }).catch(e => {
+      result.reject(e);
+    });
+    return result.promise;
   }
 }
 

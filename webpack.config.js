@@ -10,7 +10,11 @@ module.exports = {
         test: /\.ts?$/,
         use: 'ts-loader',
         exclude: /node_modules/,
-      }
+      },
+      {
+        test: /\.css$/i,
+        use: ["style-loader", "css-loader"],
+      },
     ],
   },
   resolve: {
@@ -24,9 +28,9 @@ module.exports = {
 
   plugins: [
     new HtmlWebpackPlugin({
-        title: 'our project', 
-        template: 'src/custom.html' }) 
-   ],
+        title: '', 
+        template: 'src/index.html' })
+  ],
 
   devServer: {
     static: path.join(__dirname, "dist"),
