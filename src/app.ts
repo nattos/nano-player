@@ -492,31 +492,6 @@ export class NanoApp extends LitElement {
     return this.renderAutorunResult;
   }
 
-  @observable loadedDirectory?: FileSystemDirectoryHandle;
-  @observable loadedDirectoryName = '';
-
-  @action
-  async selectDirectory() {
-    const fileHandle = await (window as any).showDirectoryPicker() as FileSystemDirectoryHandle;
-    this.loadedDirectory = fileHandle;
-    this.loadedDirectoryName = fileHandle.name;
-  }
-
-  @action
-  async requestDirectoryPermission() {
-    console.log(await (this.loadedDirectory as any).queryPermission());
-    console.log(await (this.loadedDirectory as any).requestPermission());
-  }
-
-  @action
-  async indexDirectory() {
-    if (!this.loadedDirectory) {
-      return;
-    }
-    await Database.instance.addLibraryPath(this.loadedDirectory);
-    MediaIndexer.instance.queueFileHandle(this.loadedDirectory, '');
-  }
-
   @action
   private async loadTrack(track: Track|undefined|null) {
     if (!track || !track.fileHandle) {
@@ -559,7 +534,6 @@ export class NanoApp extends LitElement {
   renderInner() {
     return html`
 <div>
-  <div><span @click=${this.selectDirectory}>SELECT</span> <span @click=${this.requestDirectoryPermission}>ALLOW</span> <span>${this.loadedDirectoryName}</span> <span @click=${this.indexDirectory}>INDEX</span></div>
   <div>
     <audio id="audio-player" controls></audio>
     <span class="click-target" @click=${this.doPreviousTrack}>PREV</span>
