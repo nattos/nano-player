@@ -113,6 +113,31 @@ export function getCommands(app: NanoApp) {
               argSpec: [],
               func: app.doNextTrack.bind(app),
             },
+            {
+              // cmd:playlist ...
+              name: 'Playlist manipulation',
+              desc: 'Performs commands on playlists.',
+              atomPrefix: 'playlist',
+              argSpec: [
+                {
+                  subcommands: [
+                    {
+                      // cmd:playlist add-to <playlist-name>
+                      name: 'Add to playlist',
+                      desc: 'Add selected tracks to a playlist',
+                      atomPrefix: 'add-to',
+                      argSpec: [
+                        {
+                          isString: true,
+                        },
+                      ],
+                      func: CommandParser.bindFunc(app.doPlaylistAddSelected, app, CommandParser.resolveStringArg()),
+                    },
+                  ],
+                },
+              ],
+              func: executeSubcommandsFunc,
+            },
             // TODO: cmd:stop-after
             // TODO: cmd:repeat <none|playlist|one|selected>
           ],

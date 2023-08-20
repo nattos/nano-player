@@ -242,6 +242,10 @@ export class NanoApp extends LitElement {
     }
   }
 
+  @action
+  doPlaylistAddSelected(playlistName: string) {
+  }
+
   private renderAutorunDisposer = () => {};
   private renderAutorunDirty = true;
   private renderIsInRender = false;

@@ -13,6 +13,8 @@ export interface ListSource {
   sortContext?: SortContext;
 }
 
+export type TrackUpdaterFunc = (trackGetter: (path: string) => Track|undefined) => PromiseLike<void>|void;
+
 class Canceled {}
 
 type SearchTableName = 'search-table-a'|'search-table-b';
@@ -53,7 +55,9 @@ export class Database {
 
   private libraryPaths: LibraryPathEntry[] = [];
   private readonly libraryPathsMap = new Map<string, LibraryPathEntry>();
-  private syncLibraryPathsFlow = Promise.resolve();
+  private syncLibraryPathsQueue = new utils.OperationQueue();
+
+  private readonly trackUpdaterQueue = new utils.OperationQueue();
 
   @observable searchResultsStatus: SearchResultStatus = 'no_query';
   @observable partialSearchResultsAvailable = 0;
@@ -97,7 +101,7 @@ export class Database {
     this.libraryPaths.push(newEntry);
     this.libraryPathsMap.set(newEntry.path, newEntry);
 
-    this.syncLibraryPathsFlow = this.syncLibraryPathsFlow.then(async () => {
+    this.syncLibraryPathsQueue.push(async () => {
       const db = await this.database;
       const tx = db.transaction('library-paths', 'readwrite');
       const libraryPathsTable = tx.objectStore('library-paths');
@@ -199,58 +203,83 @@ export class Database {
     this.searchContextEpoch++;
   }
 
-  public async updateTracks(tracks: Track[], mode: UpdateMode): Promise<string[]> {
-    const db = await this.database;
-    const tx = db.transaction(this.updateTrackTables, 'readwrite');
+  public async updateTracks(trackPaths: string[], mode: UpdateMode, updaterFunc: TrackUpdaterFunc): Promise<string[]> {
+    return await this.trackUpdaterQueue.push(async () => {
+      const db = await this.database;
+      const tx = db.transaction(this.updateTrackTables, 'readwrite');
 
-    const updatedPaths: string[] = [];
-    let aborted = true;
-    try {
-      for (const track of tracks) {
-        if (await this.addTrackInTransaction(track, tx, mode)) {
-          updatedPaths.push(track.path);
+      const updatedPaths: string[] = [];
+      let aborted = true;
+      try {
+        const allTrackKeyValues = await Promise.all(trackPaths.map<Promise<[string, Track|undefined]>>(
+            async path => [path, await this.fetchTrackForUpdate(path, mode, tx)]));
+        const updatableTracksMap = new Map<string, Track|undefined>(allTrackKeyValues);
+        const touchedTrackPaths = new Set<string>();
+        await updaterFunc((path) => {
+          touchedTrackPaths.add(path);
+          return updatableTracksMap.get(path);
+        });
+        for (const toUpdatePath of touchedTrackPaths) {
+          const toUpdate = updatableTracksMap.get(toUpdatePath);
+          if (toUpdate === undefined || toUpdate.path !== toUpdatePath) {
+            continue;
+          }
+          this.putTrack(toUpdate, tx);
+          updatedPaths.push(toUpdatePath);
           aborted = false;
         }
+      } catch {
+        aborted = true;
+        tx.abort();
+      } finally {
+        if (!aborted) {
+          tx.commit();
+          await tx.done;
+          this.listChangeEpoch++;
+        }
       }
-    } catch {
-      aborted = true;
-      tx.abort();
-    } finally {
-      if (!aborted) {
-        tx.commit();
-        await tx.done;
-        this.listChangeEpoch++;
-      }
-    }
-    console.log(`Updated tracks in database: ${updatedPaths}`);
-    return updatedPaths;
+      console.log(`Updated tracks in database: ${updatedPaths}`);
+      return updatedPaths;
+    });
   }
 
-  private async addTrackInTransaction(track: Track, tx: IDBPTransaction<unknown, string[], "readwrite">, mode: UpdateMode): Promise<boolean> {
-    const path = track.path;
+  private async fetchTrackForUpdate(path: string, mode: UpdateMode, tx: IDBPTransaction<unknown, string[], "readwrite">): Promise<Track|undefined> {
     if (!path) {
-      return false;
+      return undefined;
     }
 
     const allTracks = tx.objectStore('all-tracks');
-    async function trackExists() {
-      return await allTracks.get(path) !== undefined;
-    }
+
+    const oldTrack = await allTracks.get(path);
     switch (mode) {
       default:
       case 'upsert':
         break;
       case 'create_only':
-        if (await trackExists()) {
-          return false;
+        if (oldTrack !== undefined) {
+          return undefined;
         }
         break;
       case 'update_only':
-        if (!await trackExists()) {
-          return false;
+        if (oldTrack === undefined) {
+          return undefined;
         }
         break;
     }
+    if (!oldTrack) {
+      return {
+        path: path,
+        addedDate: Date.now(),
+        indexedDate: 0,
+        indexedAtLastModifiedDate: 0,
+        inPlaylists: [],
+      };
+    }
+    return oldTrack;
+  }
+
+  private putTrack(track: Track, tx: IDBPTransaction<unknown, string[], "readwrite">) {
+    const allTracks = tx.objectStore('all-tracks');
     allTracks.put(track);
 
     for (const prefixLength of constants.INDEXED_PREFIX_LENGTHS) {
@@ -262,7 +291,7 @@ export class Database {
         const prefixes = Array.from(prefixesSet).sort();
         const prefixTable = tx.objectStore(Database.getPrefixIndexName(context, prefixLength));
         const prefixEntry: TrackPrefix = {
-          path: path,
+          path: track.path,
           prefixes: prefixes,
         };
         prefixTable.put(prefixEntry);
@@ -286,7 +315,6 @@ export class Database {
       insertForContext('genre', [ genrePrefixes ]);
       insertForContext('index', [ indexPrefixes ]);
     }
-    return true;
   }
 
   setSearchQuery(query: string) {
@@ -462,6 +490,7 @@ export class Database {
             prefixTable.createIndex('prefixes', 'prefixes', { unique: false, multiEntry: true });
           }
         }
+        allTracksTable.createIndex('playlists', 'inPlaylists', { unique: false, multiEntry: true });
         const searchTableA = upgradeDb.createObjectStore('search-table-a', { keyPath: 'path' });
         const searchTableB = upgradeDb.createObjectStore('search-table-b', { keyPath: 'path' });
         upgradeDb.createObjectStore('library-paths', { keyPath: 'path' });
@@ -477,7 +506,7 @@ export class Database {
       console.log(upgradeDb);
     }})
 
-    this.syncLibraryPathsFlow = this.syncLibraryPathsFlow.then(async () => {
+    this.syncLibraryPathsQueue.push(async () => {
       const tx = db.transaction('library-paths', 'readonly');
       const libraryPathsTable = tx.objectStore('library-paths');
       this.libraryPaths = await libraryPathsTable.getAll() as LibraryPathEntry[];
@@ -495,6 +524,7 @@ export class Database {
           addedDate: Date.now(),
           indexedDate: 0,
           indexedAtLastModifiedDate: 0,
+          inPlaylists: [],
         };
       }
 
@@ -538,7 +568,15 @@ export class Database {
         toAdd.push(makeFakeTrack("からなー"));
         toAdd.push(makeFakeTrack("totallyAwkward"));
 
-        await this.updateTracks(toAdd, 'upsert');
+        await this.updateTracks(toAdd.map(track => track.path), 'upsert', (trackGetter) => {
+          for (const track of toAdd) {
+            const toUpdate = trackGetter(track.path);
+            if (toUpdate === undefined) {
+              continue;
+            }
+            utils.merge(toUpdate, track);
+          }
+        });
         await this.setSearchQuery("からな　ー");
         console.log("done add");
       });

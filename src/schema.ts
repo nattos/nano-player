@@ -7,6 +7,7 @@ export interface Track {
   addedDate: number;
   indexedDate: number;
   indexedAtLastModifiedDate: number;
+  inPlaylists: string[];
 }
 
 export interface TrackMetadata {

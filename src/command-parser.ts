@@ -225,6 +225,17 @@ export class CommandParser {
       throw Error(`${argValue} not found in ${enumType}.`);
     };
   }
+
+  public static resolveStringArg(): CommandArgResolverFunc {
+    return (arg: CommandResolvedArg) => {
+      const argValue = arg.stringValue;
+      if (!argValue) {
+        throw Error(`Arg expected a string.`);
+      }
+      return argValue;
+    };
+  }
+
   public static bindFunc(func: Function, thisValue: object, ...resolvers: CommandArgResolverFunc[]): CommandFunc {
     const thisBoundFunc = func.bind(thisValue);
     return (command: CommandSpec, args: CommandResolvedArg[]) => {
