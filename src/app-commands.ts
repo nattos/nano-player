@@ -13,6 +13,17 @@ export enum CmdSettingsGroupCommands {
   Show = 'show',
 }
 
+export enum CmdLibraryPathsCommands {
+  Show = 'show',
+  Add = 'add',
+  AddIndexed = 'add-indexed',
+}
+
+export enum CmdLibraryCommands {
+  Show = 'show',
+  Reindex = 'reindex',
+}
+
 function executeSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]) {
   for (const arg of args) {
     if (arg.subcommand) {
@@ -34,16 +45,16 @@ export function getCommands(app: NanoApp) {
         {
           subcommands: [
             {
-              // cmd:library-paths show
+              // cmd:library-paths <show|add|add-indexed>
               name: 'Show library paths',
               desc: 'Opens up library paths settings.',
               atomPrefix: 'library-paths',
               argSpec: [
                 {
-                  oneof: Object.values(CmdSettingsGroupCommands),
+                  oneof: Object.values(CmdLibraryPathsCommands),
                 },
               ],
-              func: CommandParser.bindFunc(app.doLibraryPathsCmd, app, CommandParser.resolveEnumArg(CmdSettingsGroupCommands)),
+              func: CommandParser.bindFunc(app.doLibraryPathsCmd, app, CommandParser.resolveEnumArg(CmdLibraryPathsCommands)),
             },
             {
               // cmd:sort <title|artist|genre|album|library-order>
@@ -56,14 +67,6 @@ export function getCommands(app: NanoApp) {
                 },
               ],
               func: CommandParser.bindFunc(app.doSortList, app, CommandParser.resolveEnumArg(CmdSortTypes)),
-            },
-            {
-              // cmd:reindex
-              name: 'Reindex library',
-              desc: 'Reloads metadata for all tracks in library, and removes missing files.',
-              atomPrefix: 'reindex',
-              argSpec: [],
-              func: app.doReindexLibrary.bind(app),
             },
             {
               // cmd:play-selected
@@ -114,6 +117,18 @@ export function getCommands(app: NanoApp) {
               func: app.doNextTrack.bind(app),
             },
             {
+              // cmd:library <show>
+              name: 'Main library commands',
+              desc: '...',
+              atomPrefix: 'library',
+              argSpec: [
+                {
+                  oneof: Object.values(CmdLibraryCommands),
+                },
+              ],
+              func: CommandParser.bindFunc(app.doLibraryCmd, app, CommandParser.resolveEnumArg(CmdLibraryCommands)),
+            },
+            {
               // cmd:playlist ...
               name: 'Playlist manipulation',
               desc: 'Performs commands on playlists.',
@@ -121,6 +136,18 @@ export function getCommands(app: NanoApp) {
               argSpec: [
                 {
                   subcommands: [
+                    {
+                      // cmd:playlist show <playlist-name>
+                      name: 'Opens playlist',
+                      desc: 'Selects and displays a playlist in the track view',
+                      atomPrefix: 'show',
+                      argSpec: [
+                        {
+                          isString: true,
+                        },
+                      ],
+                      func: CommandParser.bindFunc(app.doPlaylistShow, app, CommandParser.resolveStringArg()),
+                    },
                     {
                       // cmd:playlist add-to <playlist-name>
                       name: 'Add to playlist',
@@ -132,6 +159,38 @@ export function getCommands(app: NanoApp) {
                         },
                       ],
                       func: CommandParser.bindFunc(app.doPlaylistAddSelected, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:playlist new <playlist-name>
+                      name: 'New playlist',
+                      desc: 'Creates a new playlist',
+                      atomPrefix: 'new',
+                      argSpec: [
+                        {
+                          isString: true,
+                        },
+                      ],
+                      func: CommandParser.bindFunc(app.doPlaylistNew, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:playlist clear <playlist-name>
+                      name: 'Clear playlist',
+                      desc: 'Removes all tracks from a playlist',
+                      atomPrefix: 'clear',
+                      argSpec: [
+                        {
+                          isString: true,
+                        },
+                      ],
+                      func: CommandParser.bindFunc(app.doPlaylistClear, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:playlist show <playlist-name>
+                      name: 'DEBUG List playlists',
+                      desc: '',
+                      atomPrefix: 'debug-list',
+                      argSpec: [],
+                      func: CommandParser.bindFunc(app.doPlaylistDebugList, app),
                     },
                   ],
                 },

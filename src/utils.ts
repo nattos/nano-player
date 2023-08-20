@@ -251,10 +251,30 @@ export function* mapAll<TIn, TOut>(values: Iterable<TIn>, callback: (value: TIn)
   }
 }
 
+export function* filterUnique<TValue, TKey>(values: Iterable<TValue>, keyFn?: ((value: TValue) => TKey)): Iterable<TValue> {
+  const addedSet = new Set<TKey|TValue>();
+  for (const value of values) {
+    const key = keyFn ? keyFn(value) : value;
+    if (addedSet.has(key)) {
+      continue;
+    }
+    addedSet.add(key);
+    yield value;
+  }
+}
+
 export function setAddRange<T>(set: Set<T>, values: Iterable<T>) {
   for (const value of values) {
     set.add(value);
   }
+}
+
+export function upcast<T>(value: T) {
+  return value;
+}
+
+export function getEnumValues<T>(enumClass: { [s: string]: string }) {
+  return Object.values(enumClass) as T[];
 }
 
 export function merge<T1 extends object, T2 extends object>(onto: T1, from: T2): T1 & T2 {

@@ -1,4 +1,5 @@
 
+export const PLAYLIST_INDEX_MAX_DIGITS = 8;
 export const INDEXED_PREFIX_LENGTHS = [ 1, 3, 4 ];
 export const UPDATE_BATCH_SIZE = 1024;
 export const PARTIAL_SEARCH_BATCH_SIZE = 128;

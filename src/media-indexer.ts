@@ -3,7 +3,7 @@ import { Reader as jsmediatagsReader } from 'jsmediatags';
 import * as utils from './utils';
 import * as constants from './constants';
 import { Track, LibraryPathEntry } from './schema';
-import { Database } from './database';
+import { Database, UpdateMode } from './database';
 
 interface JsMediaTags {
   tags?: JsMediaTagsTags;
@@ -39,7 +39,7 @@ export class MediaIndexer {
   private static instanceField?: MediaIndexer;
 
   private started = false;
-  private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<FileSystemHandle>();
+  private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<[FileSystemHandle, string]>();
   private readonly toIndexQueue = new utils.AsyncProducerConsumerQueue<string>();
   private readonly audioElement: HTMLAudioElement = new Audio();
   private audioMetadataReadResolvable?: utils.Resolvable<AudioMetadataInfo>;
@@ -57,8 +57,8 @@ export class MediaIndexer {
     this.audioElement.addEventListener('loadedmetadata', () => this.audioMetadataReadSucceeded());
   }
 
-  queueFileHandle(handle: FileSystemHandle) {
-    this.toAddQueue.add(handle);
+  queueFileHandle(handle: FileSystemHandle, subpath?: string) {
+    this.toAddQueue.add([handle, subpath ?? '']);
   }
 
   private applyGeneratedMetadata(track: Track) {
@@ -74,6 +74,8 @@ export class MediaIndexer {
   }
 
   private async fileIndexerProc() {
+    await Database.instance.waitForLoad();
+
     const flow = new utils.BatchedProducerConsumerFlow<[FileSystemFileHandle, string[], LibraryPathEntry]>(16);
     flow.consume(async (entries) => {
       try {
@@ -82,7 +84,7 @@ export class MediaIndexer {
           const path = Database.makePath(libraryPath.path, pathParts);
           toUpdatePaths.push(path);
         }
-        const insertedPaths = await Database.instance.updateTracks(toUpdatePaths, 'create_only', (trackGetter) => {
+        const insertedPaths = await Database.instance.updateTracks(toUpdatePaths, UpdateMode.CreateOnly, (trackGetter) => {
           for (const [fileHandle, pathParts, libraryPath] of entries) {
             const path = Database.makePath(libraryPath.path, pathParts);
             const toUpdate = trackGetter(path);
@@ -103,9 +105,9 @@ export class MediaIndexer {
     while (true) {
       try {
         // TODO: Handle deletions!
-        const handle = await this.toAddQueue.pop();
+        const [handle, subpath] = await this.toAddQueue.pop();
         const filesIt = handle.kind === 'directory'
-            ? this.enumerateFilesRec(handle as FileSystemDirectoryHandle)
+            ? this.enumerateFilesRec(await this.getSubpathDirectory(handle as FileSystemDirectoryHandle, subpath))
             : [handle as FileSystemFileHandle];
         for await (const foundFile of filesIt) {
           console.log(foundFile);
@@ -117,6 +119,7 @@ export class MediaIndexer {
 
           const libraryPaths = Database.instance.getLibraryPaths();
           let containedLibraryPath: LibraryPathEntry|null = null;
+          let resolvedLibrarySubpath: string[]|null = null;
           for (const libraryPath of libraryPaths) {
             // TODO: Deal with permissions.
             if (!libraryPath.directoryHandle) {
@@ -124,13 +127,19 @@ export class MediaIndexer {
             }
             const resolvedPath = await libraryPath.directoryHandle.resolve(foundFile);
             if (!resolvedPath) {
-              // Can't handle ephemeral paths yet.
-              console.log(`not in library path: ${foundFile}`);
               continue;
             }
-            console.log(`adding: ${foundFile} in ${libraryPath.path}`);
-            flow.produce([foundFile, resolvedPath, libraryPath]);
+            containedLibraryPath = libraryPath;
+            resolvedLibrarySubpath = resolvedPath;
+            break;
           }
+          if (!containedLibraryPath || !resolvedLibrarySubpath) {
+            // Can't handle ephemeral paths yet.
+            console.log(`not in library path: ${foundFile}`);
+            continue;
+          }
+          console.log(`adding: ${foundFile} in ${containedLibraryPath.path}`);
+          flow.produce([foundFile, resolvedLibrarySubpath, containedLibraryPath]);
         }
 
         flow.flushProduced();
@@ -140,7 +149,25 @@ export class MediaIndexer {
     }
   }
 
-  private async* enumerateFilesRec(directory: FileSystemDirectoryHandle) {
+  private async getSubpathDirectory(directory: FileSystemDirectoryHandle, subpath: string): Promise<FileSystemDirectoryHandle|undefined> {
+    let found: FileSystemDirectoryHandle = directory;
+    for (const toFind of subpath.split('/')) {
+      if (toFind === '.' || toFind === '') {
+        continue;
+      }
+      const child = await found.getDirectoryHandle(toFind);
+      if (child === undefined) {
+        return undefined;
+      }
+      found = child;
+    }
+    return found;
+  }
+
+  private async* enumerateFilesRec(directory: FileSystemDirectoryHandle|undefined) {
+    if (!directory) {
+      return;
+    }
     const toVisitQueue = [directory];
     while (true) {
       const toVisit = toVisitQueue.pop();
@@ -161,6 +188,8 @@ export class MediaIndexer {
   }
 
   private async pathIndexerProc() {
+    await Database.instance.waitForLoad();
+
     while (true) {
       try {
         const path = await this.toIndexQueue.pop();
@@ -186,15 +215,18 @@ export class MediaIndexer {
           console.log(tags);
         } catch (e) {
           if ((e as any)?.type === 'tagFormat') {
-            tags = {
-              tags: {
-                title: utils.filePathWithoutExtension(file.name),
-              }
-            };
+            tags = {};
           } else {
             throw e;
           }
         }
+        if (!tags) {
+          tags = {};
+        }
+        if (!tags.tags) {
+          tags.tags = {};
+        }
+        tags.tags.title ??= utils.filePathWithoutExtension(file.name);
 
         const audioMetadataInfo = await this.readAudioMetadataInfo(file);
         const duration = audioMetadataInfo?.duration;
@@ -203,7 +235,7 @@ export class MediaIndexer {
         const trackNumber = utils.parseIntOr(trackNumberParts?.at(0));
         const trackTotal = utils.parseIntOr(trackNumberParts?.at(1));
 
-        Database.instance.updateTracks([path], 'update_only', (trackGetter) => {
+        Database.instance.updateTracks([path], UpdateMode.UpdateOnly, (trackGetter) => {
           const toUpdate = trackGetter(path);
           if (toUpdate === undefined) {
             return;

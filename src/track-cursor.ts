@@ -1,7 +1,8 @@
-import { ListPrimarySource, Database, SortContext } from "./database";
+import { ListPrimarySource, Database, SortContext, ListSource } from "./database";
 import { Track } from "./schema";
 import * as utils from './utils';
 import * as constants from './constants';
+import { NanoApp } from "./app";
 
 export interface TrackPositionAnchor {
   index?: number;
@@ -26,6 +27,8 @@ export class TrackCursor {
   private static readonly cachedBlockCount = 64;
   private static readonly blockSize = 128;
 
+  private sourceField: ListSource;
+
   private databaseDirty = true;
   private currentIndex = 0;
   private cachedTrackCount = 0;
@@ -34,32 +37,59 @@ export class TrackCursor {
   private readonly fetchesInFlight = new Map<number, Promise<Track[]>>();
 
   private cachedPrimarySource: ListPrimarySource;
-  private cachedSortContext: SortContext;
+  private cachedSecondarySource?: string;
+  private cachedSortContext?: SortContext;
   private cachedSearchContextEpoch: number;
   private cachedListChangeEpoch: number;
 
   constructor(
       public readonly database: Database,
-      public primarySource: ListPrimarySource,
-      public sortContext: SortContext,
-      public anchor: TrackPositionAnchor) {
-    this.cachedPrimarySource = this.database.resolvePrimarySource(this.primarySource);
-    this.cachedSortContext = sortContext;
+      primarySource: ListPrimarySource,
+      secondarySource: string|undefined,
+      sortContext: SortContext|undefined,
+      public anchor: TrackPositionAnchor,
+      ) {
+    this.sourceField = {
+      source: primarySource,
+      secondary: secondarySource,
+      sortContext: sortContext,
+    };
+    const resolvedSource = NanoApp.instance!.resolveSource(this.sourceField);
+    this.cachedPrimarySource = resolvedSource.source;
+    this.cachedSecondarySource = resolvedSource.secondary;
+    this.cachedSortContext = resolvedSource.sortContext;
     this.cachedSearchContextEpoch = this.database.searchContextEpoch;
     this.cachedListChangeEpoch = this.database.listChangeEpoch;
   }
 
-  dispose() {
+  dispose() {}
+
+  get source() { return this.sourceField; }
+  set source(source: ListSource) {
+    this.sourceField.source = source.source;
+    this.sourceField.secondary = source.secondary;
+    this.sourceField.sortContext = source.sortContext;
   }
 
+  get primarySource() { return this.sourceField.source; }
+  set primarySource(value: ListPrimarySource) { this.sourceField.source = value; }
+
+  get secondarySource() { return this.sourceField.secondary; }
+  set secondarySource(value: string|undefined) { this.sourceField.secondary = value; }
+
+  get sortContext() { return this.sourceField.sortContext; }
+  set sortContext(value: SortContext|undefined) { this.sourceField.sortContext = value; }
+
   private checkDatabaseDirty() {
-    const resolvedPrimarySource = this.database.resolvePrimarySource(this.primarySource);
-    if (this.cachedPrimarySource !== resolvedPrimarySource ||
-        this.cachedSortContext !== this.sortContext ||
+    const resolvedSource = NanoApp.instance!.resolveSource(this.sourceField);
+    if (this.cachedPrimarySource !== resolvedSource.source ||
+        this.cachedSecondarySource !== resolvedSource.secondary ||
+        this.cachedSortContext !== resolvedSource.sortContext ||
         this.cachedSearchContextEpoch !== this.database.searchContextEpoch ||
         this.cachedListChangeEpoch !== this.database.listChangeEpoch) {
-      this.cachedPrimarySource = resolvedPrimarySource;
-      this.cachedSortContext = this.sortContext;
+      this.cachedPrimarySource = resolvedSource.source;
+      this.cachedSecondarySource = resolvedSource.secondary;
+      this.cachedSortContext = resolvedSource.sortContext;
       this.cachedSearchContextEpoch = this.database.searchContextEpoch;
       this.cachedListChangeEpoch = this.database.listChangeEpoch;
       this.databaseDirty = true;
@@ -86,6 +116,7 @@ export class TrackCursor {
 
   peekRegion(startDelta: number, endDelta: number): TrackPeekResult {
     this.checkDatabaseDirty();
+    const source = NanoApp.instance!.resolveSource(this.sourceField);
 
     const databaseDirty = this.databaseDirty;
     this.databaseDirty = false;
@@ -127,7 +158,7 @@ export class TrackCursor {
     let trackCountPromise: Promise<number|undefined>;
     if (databaseDirty) {
       trackCountPromise = (async () => {
-        let updatedTrackCount = await this.database.countTracks({ source: 'auto', sortContext: this.sortContext });
+        let updatedTrackCount = await this.database.countTracks(source);
         this.cachedTrackCount = updatedTrackCount;
         return updatedTrackCount;
       })();
@@ -164,7 +195,7 @@ export class TrackCursor {
           fetch = (async () => {
             const fetchedBlock =
                 await this.database.fetchTracksInRange(
-                    { source: 'auto', sortContext: this.sortContext },
+                    source,
                     TrackCursor.blockStartIndex(blockToFetchCapture),
                     TrackCursor.blockEndIndex(blockToFetchCapture));
             this.cachedBlocks.put(blockToFetchCapture, fetchedBlock);

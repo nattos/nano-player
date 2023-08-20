@@ -42,4 +42,10 @@ export interface LibraryPathEntry {
   path: string;
   directoryHandle?: FileSystemDirectoryHandle;
   fileHandle?: FileSystemFileHandle;
+  indexedSubpaths: string[];
+}
+
+export interface PlaylistEntry {
+  key: string;
+  name: string;
 }

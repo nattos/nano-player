@@ -1,11 +1,16 @@
 import { IDBPDatabase, IDBPObjectStore, IDBPTransaction, deleteDB, openDB } from "idb";
 import { observable, makeObservable, action } from "mobx";
-import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry } from "./schema";
+import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry } from "./schema";
 import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
 import * as utils from './utils';
 import * as constants from './constants';
 
-export type ListPrimarySource = 'auto'|'library'|'search'|'playlist';
+export enum ListPrimarySource {
+  Auto = 'auto',
+  Library = 'library',
+  Search = 'search',
+  Playlist = 'playlist',
+}
 
 export interface ListSource {
   source: ListPrimarySource;
@@ -17,14 +22,53 @@ export type TrackUpdaterFunc = (trackGetter: (path: string) => Track|undefined) 
 
 class Canceled {}
 
-type SearchTableName = 'search-table-a'|'search-table-b';
-export type SearchResultStatus = 'no_query'|'partial'|'ready';
-export type QueryTokenContext = 'all'|'title'|'artist'|'album'|'genre'|'index';
-export type SortContext = 'title'|'artist'|'album'|'genre'|'index';
-export type UpdateMode = 'create_only'|'upsert'|'update_only';
+enum TableNames {
+  AllTracks = 'all-tracks',
+  LibraryPaths = 'library-paths',
+  Playlists = 'playlists',
+}
 
-const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = ['all','title','artist','album','genre','index'];
-const ALL_SORT_CONTEXTS: SortContext[] = ['title','artist','album','genre','index'];
+enum SearchTableName {
+  A = 'search-table-a',
+  B = 'search-table-b',
+}
+
+enum IndexNames {
+  Prefixes = 'prefixes',
+  Playlists = 'playlists',
+}
+
+export enum SearchResultStatus {
+  NoQuery = 'no_query',
+  Partial = 'partial',
+  Ready = 'ready',
+}
+
+export enum QueryTokenContext {
+  All = 'all',
+  Title = 'title',
+  Artist = 'artist',
+  Album = 'album',
+  Genre = 'genre',
+  Index = 'index',
+}
+
+export enum SortContext {
+  Title = 'title',
+  Artist = 'artist',
+  Album = 'album',
+  Genre = 'genre',
+  Index = 'index',
+}
+
+export enum UpdateMode {
+  CreateOnly = 'create_only',
+  Upsert = 'upsert',
+  UpdateOnly = 'update_only',
+}
+
+const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = utils.getEnumValues(QueryTokenContext);
+const ALL_SORT_CONTEXTS: SortContext[] = utils.getEnumValues(SortContext);
 const SORT_CONTEXTS_TO_METADATA_PATH = {
   'title': 'metadata.title',
   'artist': 'metadata.artist',
@@ -50,16 +94,22 @@ export class Database {
   private searchQueryUpdateInFlight = Promise.resolve();
   private searchQueryUpdateCancel = new utils.Resolvable<void>();
 
-  private currentSearchTable: SearchTableName = 'search-table-a';
-  private partialSearchTable: SearchTableName = 'search-table-b';
+  private currentSearchTable: SearchTableName = SearchTableName.A;
+  private partialSearchTable: SearchTableName = SearchTableName.B;
 
   private libraryPaths: LibraryPathEntry[] = [];
   private readonly libraryPathsMap = new Map<string, LibraryPathEntry>();
-  private syncLibraryPathsQueue = new utils.OperationQueue();
+  private readonly libraryPathsLoaded = new utils.Resolvable<void>();
+  private readonly syncLibraryPathsQueue = new utils.OperationQueue();
+
+  private playlists: PlaylistEntry[] = [];
+  private readonly playlistsMap = new Map<string, PlaylistEntry>();
+  private readonly playlistsLoaded = new utils.Resolvable<void>();
+  private readonly syncPlaylistsQueue = new utils.OperationQueue();
 
   private readonly trackUpdaterQueue = new utils.OperationQueue();
 
-  @observable searchResultsStatus: SearchResultStatus = 'no_query';
+  @observable searchResultsStatus: SearchResultStatus = SearchResultStatus.NoQuery;
   @observable partialSearchResultsAvailable = 0;
   @observable partialSearchResultsSummary: Track[] = [];
   @observable searchContextEpoch = 0;
@@ -68,11 +118,15 @@ export class Database {
   constructor() {
     makeObservable(this);
     this.updateTrackTables =
-        ['all-tracks'].concat(
+        utils.upcast<string[]>([TableNames.AllTracks]).concat(
           Array.from(utils.mapAll(ALL_QUERY_TOKEN_CONTEXTS,
                 (context) => constants.INDEXED_PREFIX_LENGTHS.map(
                   prefixLength => Database.getPrefixIndexName(context, prefixLength)))));
     this.database = this.openDatabaseAsync();
+  }
+
+  async waitForLoad() {
+    await this.database;
   }
 
   findLibraryPath(sourceKey: string): LibraryPathEntry|undefined {
@@ -83,41 +137,120 @@ export class Database {
     return this.libraryPaths;
   }
 
-  async addLibraryPath(directoryHandle: FileSystemDirectoryHandle) {
+  async addLibraryPath(directoryHandle: FileSystemDirectoryHandle): Promise<LibraryPathEntry> {
     await this.database;
 
     // Remove duplicate. Allow subdirectories, because it's possible to add a parent afterwards.
     for (const existingPath of this.libraryPaths) {
       const resolvedPaths = await existingPath.directoryHandle?.resolve(directoryHandle);
       if (resolvedPaths?.length === 0) {
-        return;
+        return existingPath;
       }
     }
     const newPath = crypto.randomUUID();
     const newEntry: LibraryPathEntry = {
       path: newPath,
       directoryHandle: directoryHandle,
+      indexedSubpaths: [],
     };
     this.libraryPaths.push(newEntry);
     this.libraryPathsMap.set(newEntry.path, newEntry);
 
     this.syncLibraryPathsQueue.push(async () => {
       const db = await this.database;
-      const tx = db.transaction('library-paths', 'readwrite');
-      const libraryPathsTable = tx.objectStore('library-paths');
+      const tx = db.transaction(TableNames.LibraryPaths, 'readwrite');
+      const libraryPathsTable = tx.objectStore(TableNames.LibraryPaths);
       libraryPathsTable.put(newEntry);
+    });
+    return newEntry;
+  }
+
+  async setLibraryPathIndexedSubpaths(path: string, subpaths: string[]) {
+    await this.database;
+
+    const entry = this.libraryPathsMap.get(path);
+    if (entry === undefined) {
+      return undefined;
+    }
+
+    entry.indexedSubpaths = subpaths;
+
+    this.syncLibraryPathsQueue.push(async () => {
+      const db = await this.database;
+      const tx = db.transaction(TableNames.LibraryPaths, 'readwrite');
+      const libraryPathsTable = tx.objectStore(TableNames.LibraryPaths);
+      libraryPathsTable.put(entry);
     });
   }
 
-  cursor(primarySource: ListPrimarySource, sortContext: SortContext, anchor: TrackPositionAnchor) {
-    return new TrackCursor(this, primarySource, sortContext, anchor);
+  getPlaylists(): PlaylistEntry[] {
+    return this.playlists;
+  }
+
+  getPlaylistByKey(key: string): PlaylistEntry|undefined {
+    return this.playlistsMap.get(key);
+  }
+
+  addPlaylist(name: string): PlaylistEntry {
+    const newKey = crypto.randomUUID();
+    const newEntry: PlaylistEntry = {
+      key: newKey,
+      name: name,
+    };
+    this.playlists.push(newEntry);
+    this.playlistsMap.set(newKey, newEntry);
+
+    this.syncPlaylistsQueue.push(async () => {
+      const db = await this.database;
+      const tx = db.transaction(TableNames.Playlists, 'readwrite');
+      const playlistsTable = tx.objectStore(TableNames.Playlists);
+      playlistsTable.put(newEntry);
+    });
+
+    return newEntry;
+  }
+
+  async getPlaylistContainedTrackPaths(key: string): Promise<string[]> {
+    const db = await this.database;
+    const tx = db.transaction(TableNames.AllTracks, 'readonly');
+    const allTracksTable = tx.objectStore(TableNames.AllTracks);
+    const inPlaylistIndex = allTracksTable.index(IndexNames.Playlists);
+    const fullRange = IDBKeyRange.bound(
+        Database.makePlaylistMinIndexKey(key),
+        Database.makePlaylistMaxIndexKey(key));
+    return await inPlaylistIndex.getAllKeys(fullRange) as string[];
+  }
+
+  static getPlaylistIndexKeyKey(indexKey: string): string {
+    return indexKey.split('|').at(0) ?? '';
+  }
+
+  static getPlaylistIndexKeyIndex(indexKey: string): string {
+    return indexKey.split('|').at(1) ?? '';
+  }
+
+  static makePlaylistIndexKey(key: string, index: number) {
+    return `${key}|${index.toString().padStart(constants.PLAYLIST_INDEX_MAX_DIGITS, '0')}`;
+  }
+
+  static makePlaylistMinIndexKey(key: string) {
+    return `${key}|${''.padStart(constants.PLAYLIST_INDEX_MAX_DIGITS, '0')}`;
+  }
+
+  static makePlaylistMaxIndexKey(key: string) {
+    return `${key}|${''.padStart(constants.PLAYLIST_INDEX_MAX_DIGITS, '9')}`;
+  }
+
+  cursor(primarySource: ListPrimarySource, secondarySource: string|undefined, sortContext: SortContext|undefined, anchor: TrackPositionAnchor) {
+    return new TrackCursor(this, primarySource, secondarySource, sortContext, anchor);
   }
 
   async fetchTracksInRange(source: ListSource, min: number, max: number): Promise<Track[]> {
     const db = await this.database;
     const sortIndex = this.getSourceIndexlike(source, db);
+    const keyRange = this.getSourceFullKeyRange(source);
 
-    const cursor = await sortIndex.openCursor();
+    const cursor = await sortIndex.openCursor(keyRange);
     if (!cursor) {
       return [];
     }
@@ -139,51 +272,55 @@ export class Database {
   async countTracks(source: ListSource): Promise<number> {
     const db = await this.database;
     const sortIndex = this.getSourceIndexlike(source, db);
-    // const allTracksTable = tx.objectStore('all-tracks');
+    const keyRange = this.getSourceFullKeyRange(source);
+    // const allTracksTable = tx.objectStore(TableNames.AllTracks);
     // const sortIndex = allTracksTable.index(sortContext);
-    return await sortIndex.count();
+    return await sortIndex.count(keyRange);
   }
 
   async fetchTrackByPath(path: string): Promise<Track|undefined> {
     const db = await this.database;
-    const tx = db.transaction('all-tracks', 'readonly');
-    const allTracksTable = tx.objectStore('all-tracks');
+    const tx = db.transaction(TableNames.AllTracks, 'readonly');
+    const allTracksTable = tx.objectStore(TableNames.AllTracks);
     const track = await allTracksTable.get(path);
     return track;
   }
 
-  resolvePrimarySource(source: ListPrimarySource): ListPrimarySource {
-    const searchStatus = this.searchResultsStatus;
-    return source === 'auto'
-        ? (searchStatus === 'no_query' ? 'library' : 'search')
-        : source;
+  private getSourceFullKeyRange(source: ListSource) {
+    if (source.source === ListPrimarySource.Playlist && source.secondary) {
+      const key = source.secondary;
+      const playlistRange = IDBKeyRange.bound(
+          Database.makePlaylistMinIndexKey(key),
+          Database.makePlaylistMaxIndexKey(key));
+      return playlistRange;
+    }
+    return undefined;
   }
 
   private getSourceIndexlike(source: ListSource, db: IDBPDatabase) {
-    return this.getSourceIndex(this.getSourceInnerIndexlike(source, db), source.sortContext);
+    return this.getSourceIndex(this.getSourceInnerIndexlike(source, db), source);
   }
 
   private getSourceInnerIndexlike(source: ListSource, db: IDBPDatabase) {
     const searchStatus = this.searchResultsStatus;
-    const primarySource = this.resolvePrimarySource(source.source);
     function getTable(name: string) {
       return db.transaction(name, 'readonly').objectStore(name);
     }
 
-    switch (primarySource) {
+    switch (source.source) {
       default:
       case 'library':
-        return getTable('all-tracks');
+        return getTable(TableNames.AllTracks);
       case 'search':
         switch (searchStatus) {
           default:
-          case 'no_query':
+          case SearchResultStatus.NoQuery:
             // TODO: Return empty.
             return getTable(this.currentSearchTable);
-          case 'partial':
+          case SearchResultStatus.Partial:
             // TODO: Handle summary.
             return getTable(this.partialSearchTable);
-          case 'ready':
+          case SearchResultStatus.Ready:
             return getTable(this.currentSearchTable);
         }
         break;
@@ -191,8 +328,11 @@ export class Database {
     }
   }
 
-  private getSourceIndex(store: IDBPObjectStore<unknown, ArrayLike<string>, any, 'readonly'>, sortContext?: SortContext) {
-    return store.index(sortContext ?? 'index');
+  private getSourceIndex(store: IDBPObjectStore<unknown, ArrayLike<string>, any, 'readonly'>, source: ListSource) {
+    if (source.source === ListPrimarySource.Playlist) {
+      return store.index(IndexNames.Playlists);
+    }
+    return store.index(source.sortContext ?? 'index');
   }
 
   @action
@@ -248,7 +388,7 @@ export class Database {
       return undefined;
     }
 
-    const allTracks = tx.objectStore('all-tracks');
+    const allTracks = tx.objectStore(TableNames.AllTracks);
 
     const oldTrack = await allTracks.get(path);
     switch (mode) {
@@ -279,7 +419,7 @@ export class Database {
   }
 
   private putTrack(track: Track, tx: IDBPTransaction<unknown, string[], "readwrite">) {
-    const allTracks = tx.objectStore('all-tracks');
+    const allTracks = tx.objectStore(TableNames.AllTracks);
     allTracks.put(track);
 
     for (const prefixLength of constants.INDEXED_PREFIX_LENGTHS) {
@@ -307,13 +447,12 @@ export class Database {
       const genrePrefixes = generatePrefixes(track.metadata?.genre);
       const indexPrefixes = generatePrefixes(track.generatedMetadata?.librarySortKey);
 
-      type QueryTokenContext = 'all'|'title'|'artist'|'album'|'genre'|'index';
-      insertForContext('all', [ pathPrefixes, titlePrefixes, artistPrefixes, albumPrefixes, genrePrefixes, indexPrefixes ]);
-      insertForContext('title', [ titlePrefixes ]);
-      insertForContext('artist', [ artistPrefixes ]);
-      insertForContext('album', [ albumPrefixes ]);
-      insertForContext('genre', [ genrePrefixes ]);
-      insertForContext('index', [ indexPrefixes ]);
+      insertForContext(QueryTokenContext.All, [ pathPrefixes, titlePrefixes, artistPrefixes, albumPrefixes, genrePrefixes, indexPrefixes ]);
+      insertForContext(QueryTokenContext.Title, [ titlePrefixes ]);
+      insertForContext(QueryTokenContext.Artist, [ artistPrefixes ]);
+      insertForContext(QueryTokenContext.Album, [ albumPrefixes ]);
+      insertForContext(QueryTokenContext.Genre, [ genrePrefixes ]);
+      insertForContext(QueryTokenContext.Index, [ indexPrefixes ]);
     }
   }
 
@@ -346,7 +485,7 @@ export class Database {
         console.log("updateSearchTable canceled");
         return;
       }
-      this.setSearchResultStatus('no_query', 0);
+      this.setSearchResultStatus(SearchResultStatus.NoQuery, 0);
       throw e;
     }
   }
@@ -368,7 +507,7 @@ export class Database {
 
     const db = await orThrowCanceled(this.database);
     const tx = db.transaction(this.updateTrackTables, 'readonly');
-    const allTracksTable = tx.objectStore('all-tracks');
+    const allTracksTable = tx.objectStore(TableNames.AllTracks);
 
     const minPrefixLength = constants.INDEXED_PREFIX_LENGTHS[0];
     const maxPrefixLength = constants.INDEXED_PREFIX_LENGTHS[constants.INDEXED_PREFIX_LENGTHS.length - 1];
@@ -387,9 +526,9 @@ export class Database {
 
       const queryPrefix = queryToken.slice(0, prefixLength);
 
-      const prefixTableName = Database.getPrefixIndexName('all', prefixLength);
+      const prefixTableName = Database.getPrefixIndexName(QueryTokenContext.All, prefixLength);
       const prefixTable = tx.objectStore(prefixTableName);
-      const prefixesIndex = prefixTable.index('prefixes');
+      const prefixesIndex = prefixTable.index(IndexNames.Prefixes);
       const foundCount = await orThrowCanceled(prefixesIndex.count(IDBKeyRange.only(queryPrefix)));
 
       if (!hasBest || foundCount < bestCount) {
@@ -416,7 +555,7 @@ export class Database {
           const toAddEntry: SearchTableEntry = toAddTrack;
           searchTable.put(toAddEntry);
         }
-        this.setSearchResultStatus('partial', findCount, partialSummary);
+        this.setSearchResultStatus(SearchResultStatus.Partial, findCount, partialSummary);
       }));
 
       searchTableAddFlow.consumerThen(() => withSearchTable(async (searchTable) => {
@@ -453,7 +592,7 @@ export class Database {
 
       await orThrowCanceled(searchTableAddFlow.join());
       this.currentSearchTable = searchTableName;
-      this.setSearchResultStatus(queryTokens.length === 0 ? 'no_query' : 'ready', findCount);
+      this.setSearchResultStatus(queryTokens.length === 0 ? SearchResultStatus.NoQuery : SearchResultStatus.Ready, findCount);
       console.log(`Scanned ${bestCount} entries to find ${findCount} results.`);
     } catch (e) {
       if (e === Canceled) {
@@ -481,41 +620,58 @@ export class Database {
     }
     const db = await openDB('data-tables', 1, {
       upgrade: (upgradeDb) => {
-      if (!upgradeDb.objectStoreNames.contains('all-tracks')) {
-        const allTracksTable = upgradeDb.createObjectStore('all-tracks', { keyPath: 'path' });
-        for (const context of ALL_QUERY_TOKEN_CONTEXTS) {
-          for (const prefixLength of constants.INDEXED_PREFIX_LENGTHS) {
-            const prefixTableName = Database.getPrefixIndexName(context, prefixLength);
-            const prefixTable = upgradeDb.createObjectStore(prefixTableName, { keyPath: 'path' });
-            prefixTable.createIndex('prefixes', 'prefixes', { unique: false, multiEntry: true });
-          }
-        }
-        allTracksTable.createIndex('playlists', 'inPlaylists', { unique: false, multiEntry: true });
-        const searchTableA = upgradeDb.createObjectStore('search-table-a', { keyPath: 'path' });
-        const searchTableB = upgradeDb.createObjectStore('search-table-b', { keyPath: 'path' });
-        upgradeDb.createObjectStore('library-paths', { keyPath: 'path' });
-
-        const allSortableTables = [allTracksTable, searchTableA, searchTableB];
-        for (const table of allSortableTables) {
-          for (const context of ALL_SORT_CONTEXTS) {
-            const keyPath = SORT_CONTEXTS_TO_METADATA_PATH[context];
-            table.createIndex(context, keyPath, { unique: false });
-          }
+      const allTracksTable = upgradeDb.createObjectStore(TableNames.AllTracks, { keyPath: 'path' });
+      for (const context of ALL_QUERY_TOKEN_CONTEXTS) {
+        for (const prefixLength of constants.INDEXED_PREFIX_LENGTHS) {
+          const prefixTableName = Database.getPrefixIndexName(context, prefixLength);
+          const prefixTable = upgradeDb.createObjectStore(prefixTableName, { keyPath: 'path' });
+          prefixTable.createIndex(IndexNames.Prefixes, 'prefixes', { unique: false, multiEntry: true });
         }
       }
+      allTracksTable.createIndex(IndexNames.Playlists, 'inPlaylists', { unique: false, multiEntry: true });
+      const searchTableA = upgradeDb.createObjectStore(SearchTableName.A, { keyPath: 'path' });
+      const searchTableB = upgradeDb.createObjectStore(SearchTableName.B, { keyPath: 'path' });
+
+      const allSortableTables = [allTracksTable, searchTableA, searchTableB];
+      for (const table of allSortableTables) {
+        for (const context of ALL_SORT_CONTEXTS) {
+          const keyPath = SORT_CONTEXTS_TO_METADATA_PATH[context];
+          table.createIndex(context, keyPath, { unique: false });
+        }
+      }
+
+      upgradeDb.createObjectStore(TableNames.LibraryPaths, { keyPath: 'path' });
+      upgradeDb.createObjectStore(TableNames.Playlists, { keyPath: 'key' });
+
       console.log(upgradeDb);
     }})
 
-    this.syncLibraryPathsQueue.push(async () => {
-      const tx = db.transaction('library-paths', 'readonly');
-      const libraryPathsTable = tx.objectStore('library-paths');
+    const syncLibraryPathsOp = this.syncLibraryPathsQueue.push(async () => {
+      const tx = db.transaction(TableNames.LibraryPaths, 'readonly');
+      const libraryPathsTable = tx.objectStore(TableNames.LibraryPaths);
       this.libraryPaths = await libraryPathsTable.getAll() as LibraryPathEntry[];
       this.libraryPathsMap.clear();
       for (const entry of this.libraryPaths) {
         this.libraryPathsMap.set(entry.path, entry);
       }
+      this.libraryPathsLoaded.resolve();
       await tx;
     });
+
+    const syncPlaylistsOp = this.syncPlaylistsQueue.push(async () => {
+      const tx = db.transaction(TableNames.Playlists, 'readonly');
+      const playlistsTable = tx.objectStore(TableNames.Playlists);
+      this.playlists = await playlistsTable.getAll() as PlaylistEntry[];
+      this.playlistsMap.clear();
+      for (const entry of this.playlists) {
+        this.playlistsMap.set(entry.key, entry);
+      }
+      this.playlistsLoaded.resolve();
+      await tx;
+    });
+
+    await syncLibraryPathsOp;
+    await syncPlaylistsOp;
 
     if (constants.DEBUG_RESET_DATABASE && constants.DEBUG_INSERT_FAKE_DATA) {
       function makeFakeTrack(path: string): Track {
@@ -568,7 +724,7 @@ export class Database {
         toAdd.push(makeFakeTrack("からなー"));
         toAdd.push(makeFakeTrack("totallyAwkward"));
 
-        await this.updateTracks(toAdd.map(track => track.path), 'upsert', (trackGetter) => {
+        await this.updateTracks(toAdd.map(track => track.path), UpdateMode.Upsert, (trackGetter) => {
           for (const track of toAdd) {
             const toUpdate = trackGetter(track.path);
             if (toUpdate === undefined) {
@@ -616,10 +772,10 @@ export class Database {
   private static getNextSearchTable(from: SearchTableName): SearchTableName {
     switch (from) {
       default:
-      case 'search-table-a':
-        return 'search-table-b';
-      case 'search-table-b':
-        return 'search-table-a';
+      case SearchTableName.A:
+        return SearchTableName.B;
+      case SearchTableName.B:
+        return SearchTableName.A;
     }
   }
 

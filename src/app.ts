@@ -9,10 +9,11 @@ import * as constants from './constants';
 import { TrackView, TrackViewHost } from './track-view';
 import { Track } from './schema';
 import { LIST_VIEW_PEEK_LOOKAHEAD } from './constants';
-import { Database, SortContext } from './database';
+import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
-import { CmdSettingsGroupCommands, CmdSortTypes, getCommands } from './app-commands';
+import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSettingsGroupCommands, CmdSortTypes, getCommands } from './app-commands';
+import { Playlist, PlaylistManager } from './playlist-manager';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -21,6 +22,9 @@ export class NanoApp extends LitElement {
   static instance?: NanoApp;
 
   static styles = css`
+.click-target {
+  user-select: none;
+}
   `;
 
   @query('#search-query-textarea') searchQueryTextarea!: HTMLTextAreaElement;
@@ -62,7 +66,6 @@ export class NanoApp extends LitElement {
 
   @action
   private queryChanged() {
-    Database.instance.setSearchQuery(this.searchQueryTextarea.value);
     this.completions = this.commandParser.parse(this.searchQueryTextarea.value);
   }
 
@@ -82,26 +85,64 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  doLibraryPathsCmd(cmd: CmdSettingsGroupCommands) {}
+  doLibraryPathsCmd(cmd: CmdLibraryPathsCommands) {
+    switch (cmd) {
+      case CmdLibraryPathsCommands.Show:
+        console.log(JSON.stringify(Database.instance.getLibraryPaths()));
+        break;
+      case CmdLibraryPathsCommands.Add:
+        this.doLibraryPathsAddFromDialog(false);
+        break;
+      case CmdLibraryPathsCommands.AddIndexed:
+        this.doLibraryPathsAddFromDialog(true);
+        break;
+    }
+  }
 
   @action
-  async doReindexLibrary() {
-    for (const libraryPath of Database.instance.getLibraryPaths()) {
-      if (libraryPath.directoryHandle === undefined) {
-        continue;
-      }
-      // TODO: Centralize permission handling.
-      // TODO: Deal with API.
-      const permissionResult = await (libraryPath.directoryHandle as any)?.requestPermission();
-      if (permissionResult !== 'granted') {
-        continue;
-      }
-      MediaIndexer.instance.queueFileHandle(libraryPath.directoryHandle);
+  async doLibraryPathsAddFromDialog(setAsIndexed: boolean) {
+    const directoryHandle = await (window as any).showDirectoryPicker() as FileSystemDirectoryHandle;
+    if (!directoryHandle) {
+      return;
     }
+
+    const libraryPaths = Database.instance.getLibraryPaths();
+    let resolvedLibraryPath = undefined;
+    let resolvedLibrarySubpath = undefined;
+    for (const entry of libraryPaths) {
+      const resolvedPath = await entry.directoryHandle?.resolve(directoryHandle);
+      if (resolvedPath) {
+        resolvedLibraryPath = entry;
+        resolvedLibrarySubpath = resolvedPath;
+        break;
+      }
+    }
+    if (!resolvedLibraryPath) {
+      resolvedLibraryPath = await Database.instance.addLibraryPath(directoryHandle);
+      resolvedLibrarySubpath = [];
+    }
+
+    if (setAsIndexed) {
+      const newPath = (resolvedLibrarySubpath ?? []).join('/');
+      const oldPaths = resolvedLibraryPath.indexedSubpaths;
+      const newPaths = Array.from(utils.filterUnique(oldPaths.concat(newPath)));
+      Database.instance.setLibraryPathIndexedSubpaths(resolvedLibraryPath.path, newPaths);
+      if (resolvedLibraryPath.directoryHandle) {
+        // TODO: Centralize permission handling.
+        // TODO: Deal with API.
+        const permissionResult = await (resolvedLibraryPath.directoryHandle as any)?.requestPermission();
+        if (permissionResult === 'granted') {
+          MediaIndexer.instance.queueFileHandle(resolvedLibraryPath.directoryHandle, newPath);
+        }
+      }
+    }
+
+    console.log(JSON.stringify(Database.instance.getLibraryPaths()));
   }
 
   @observable isPlaying = false;
   @observable currentPlayTrack: Track|null = null;
+  @observable currentPlayPlaylist: Playlist|null = null;
   private playCursor?: TrackCursor;
   private playOpQueue = new utils.OperationQueue();
 
@@ -112,17 +153,31 @@ export class NanoApp extends LitElement {
   @action
   doPlayTrack(atIndex: number, track: Track|undefined) {
     this.playOpQueue.push(async () => {
+      const fromSource: ListSource = {
+        source: this.trackViewCursor?.primarySource ?? ListPrimarySource.Auto,
+        secondary: this.trackViewPlaylist,
+        sortContext: this.trackViewCursor?.sortContext,
+      };
       // TODO: Verify track matches.
-      await this.movePlayCursor(0, atIndex);
+      await this.movePlayCursor(0, atIndex, fromSource);
       this.setPlayState(true);
     });
   }
 
-  private async movePlayCursor(delta: number, absPos?: number) {
+  private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource) {
+    let needsInitialSeek = false;
     if (!this.playCursor) {
-      this.playCursor = Database.instance.cursor('library', this.trackViewCursor?.sortContext ?? 'index', {});
+      this.playCursor = Database.instance.cursor(
+          ListPrimarySource.Library, undefined, this.trackViewCursor?.sortContext ?? SortContext.Index, {});
+      needsInitialSeek = true;
+    }
+    if (fromSource) {
+      this.playCursor.source = fromSource;
+    }
+    if (needsInitialSeek) {
       this.playCursor.seek(delta >= 0 ? 0 : Infinity);
     }
+
     const firstResults = this.playCursor.peekRegion(0, 0);
     if (firstResults.updatedResultsPromise) {
       await firstResults.updatedResultsPromise;
@@ -155,9 +210,16 @@ export class NanoApp extends LitElement {
         break;
       }
     }
+
+    let fromPlaylist: Playlist|undefined = undefined;
+    const resolvedSource = this.resolveSource(this.playCursor.source);
+    if (resolvedSource.source === ListPrimarySource.Playlist && resolvedSource.secondary) {
+      fromPlaylist = await PlaylistManager.instance.getPlaylist(resolvedSource.secondary);
+    }
     runInAction(() => {
       console.log(`currentPlayTrack: ${foundTrack?.path}`);
       this.currentPlayTrack = foundTrack ?? null;
+      this.currentPlayPlaylist = fromPlaylist ?? null;
     });
   }
 
@@ -218,32 +280,130 @@ export class NanoApp extends LitElement {
     let sortContext: SortContext|undefined = undefined;
     switch (sortType) {
       case CmdSortTypes.Title:
-        sortContext = 'title';
+        sortContext = SortContext.Title;
         break;
       case CmdSortTypes.Artist:
-        sortContext = 'artist';
+        sortContext = SortContext.Artist;
         break;
       case CmdSortTypes.Genre:
-        sortContext = 'genre';
+        sortContext = SortContext.Genre;
         break;
       case CmdSortTypes.Album:
-        sortContext = 'album';
+        sortContext = SortContext.Album;
         break;
       case CmdSortTypes.LibraryOrder:
-        sortContext = 'index';
+        sortContext = SortContext.Index;
         break;
     }
-    if (sortContext && this.trackViewCursor) {
-      this.trackViewCursor.sortContext = sortContext;
-      this.updateTrackDataInViewport();
-    }
-    if (sortContext && this.playCursor) {
-      this.playCursor.sortContext = sortContext;
+    this.trackViewSortContext = sortContext;
+    this.updateTrackDataInViewport();
+  }
+
+  @action
+  async doLibraryCmd(command?: CmdLibraryCommands) {
+    switch (command) {
+      case CmdLibraryCommands.Reindex:
+        this.doReindexLibrary();
+        break;
+      default:
+      case CmdLibraryCommands.Show:
+        this.doLibraryShow();
+        break;
     }
   }
 
   @action
-  doPlaylistAddSelected(playlistName: string) {
+  doLibraryShow() {
+    this.trackViewPlaylist = undefined;
+    this.trackViewCursor!.primarySource = ListPrimarySource.Auto;
+    this.updateTrackDataInViewport();
+  }
+
+  @action
+  async doReindexLibrary() {
+    for (const libraryPath of Database.instance.getLibraryPaths()) {
+      if (libraryPath.directoryHandle === undefined || libraryPath.indexedSubpaths.length === 0) {
+        continue;
+      }
+      // TODO: Centralize permission handling.
+      // TODO: Deal with API.
+      const permissionResult = await (libraryPath.directoryHandle as any)?.requestPermission();
+      if (permissionResult !== 'granted') {
+        continue;
+      }
+      for (const subpath of libraryPath.indexedSubpaths) {
+        MediaIndexer.instance.queueFileHandle(libraryPath.directoryHandle, subpath);
+      }
+    }
+  }
+
+  @action
+  async doPlaylistShow(playlistArgStr: string) {
+    const playlist = await this.resolvePlaylistArg(playlistArgStr);
+    if (playlist ===  undefined) {
+      return;
+    }
+    console.log(playlist.entryPaths.join(', '));
+    this.trackViewPlaylist = playlist.key;
+    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+    this.updateTrackDataInViewport();
+  }
+
+  @action
+  async doPlaylistAddSelected(playlistArgStr: string) {
+    const playlist = await this.resolvePlaylistArg(playlistArgStr);
+    if (playlist === undefined) {
+      return;
+    }
+    const newEntries = Array.from(playlist.entryPaths).concat(this.tracksInView.slice(0, 3).map(track => track.path));
+    await PlaylistManager.instance.updatePlaylist(playlist.key, newEntries);
+    this.updateTrackDataInViewport();
+
+    console.log(playlist.entryPaths.join(', '));
+  }
+
+  @action
+  async doPlaylistClear(playlistArgStr: string) {
+    const playlist = await this.resolvePlaylistArg(playlistArgStr);
+    if (playlist === undefined) {
+      return;
+    }
+    await PlaylistManager.instance.updatePlaylist(playlist.key, []);
+    this.updateTrackDataInViewport();
+  }
+
+  @action
+  async doPlaylistNew(playlistName: string) {
+    const newEntry = Database.instance.addPlaylist(playlistName);
+    console.log(`Created ${newEntry.name} : ${newEntry.key}`);
+    this.trackViewPlaylist = newEntry.key;
+    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+    this.updateTrackDataInViewport();
+  }
+
+  @action
+  async doPlaylistDebugList() {
+    const strs = await Promise.all(Database.instance.getPlaylists().map(async entry => {
+      const playlist = await PlaylistManager.instance.getPlaylist(entry.key);
+      let countStr = '<unknown/missing>';
+      if (playlist !== undefined) {
+        countStr = `count: ${playlist.entryPaths.length}`;
+      }
+      return `${entry.key} | ${entry.name} (${countStr})`;
+    }));
+    console.log(strs.join('\n'));
+  }
+
+  private async resolvePlaylistArg(playlistArgStr: string): Promise<Playlist|undefined> {
+    const playlists = Database.instance.getPlaylists();
+    let entry =
+        playlists.find(entry => entry.key === playlistArgStr) ??
+        playlists.find(entry => entry.name === playlistArgStr);
+    if (entry === undefined) {
+      return;
+    }
+    const playlistKey = entry.key;
+    return await PlaylistManager.instance.getPlaylist(playlistKey);
   }
 
   private renderAutorunDisposer = () => {};
@@ -251,6 +411,8 @@ export class NanoApp extends LitElement {
   private renderIsInRender = false;
   private renderAutorunResult = html``;
 
+  private trackViewPlaylist?: string;
+  private trackViewSortContext = SortContext.Index;
   private trackViewCursor?: TrackCursor;
   @observable tracksInView: Track[] = [];
   tracksInViewBaseIndex = 0;
@@ -260,7 +422,7 @@ export class NanoApp extends LitElement {
   @action
   private updateTrackDataInViewport() {
     if (!this.trackViewCursor) {
-      this.trackViewCursor = Database.instance.cursor('auto', 'index', {});
+      this.trackViewCursor = Database.instance.cursor(ListPrimarySource.Auto, undefined, undefined, {});
     }
 
     const blockSize = LIST_VIEW_PEEK_LOOKAHEAD;
@@ -291,6 +453,22 @@ export class NanoApp extends LitElement {
     }
   }
 
+  resolveSource(source: ListSource): ListSource {
+    const newSource: ListSource = {
+      source: source.source,
+      secondary: source.secondary,
+      sortContext: source.sortContext ?? this.trackViewSortContext,
+    };
+    const searchStatus = Database.instance.searchResultsStatus;
+    if (newSource.source === ListPrimarySource.Auto) {
+      newSource.source = (searchStatus === SearchResultStatus.NoQuery ? ListPrimarySource.Library : ListPrimarySource.Search);
+    }
+    if (newSource.source === ListPrimarySource.Playlist) {
+      newSource.secondary = newSource.secondary ?? this.trackViewPlaylist;
+    }
+    return newSource;
+  }
+
   protected override update(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
     if (changedProperties.size > 0) {
       this.renderAutorunDirty = true;
@@ -316,8 +494,6 @@ export class NanoApp extends LitElement {
 
   @observable loadedDirectory?: FileSystemDirectoryHandle;
   @observable loadedDirectoryName = '';
-  @observable loadedFile?: FileSystemFileHandle;
-  @observable loadedFileName = '';
 
   @action
   async selectDirectory() {
@@ -338,49 +514,7 @@ export class NanoApp extends LitElement {
       return;
     }
     await Database.instance.addLibraryPath(this.loadedDirectory);
-    MediaIndexer.instance.queueFileHandle(this.loadedDirectory);
-  }
-
-  @action
-  async selectFile() {
-    const fileHandles = await (window as any).showOpenFilePicker() as FileSystemFileHandle[];
-    const fileHandle = fileHandles[0];
-    this.loadedFile = fileHandle;
-    this.loadedFileName = fileHandle?.name ?? '';
-  }
-
-  @action
-  async requestFilePermission() {
-    console.log(await (this.loadedFile as any).queryPermission());
-    console.log(await (this.loadedFile as any).requestPermission());
-  }
-
-  @action
-  async resolveFileInDirectory() {
-    if (!this.loadedFile || !this.loadedDirectory) {
-      return;
-    }
-    const resolved = await this.loadedDirectory?.resolve(this.loadedFile);
-    console.log(resolved);
-    if (!resolved) {
-      return;
-    }
-    const fileName = resolved.splice(resolved.length - 1)[0];
-    let directoryHandle = this.loadedDirectory;
-    for (const directoryName of resolved) {
-      directoryHandle = await directoryHandle.getDirectoryHandle(directoryName);
-    }
-    const fileHandle = await directoryHandle.getFileHandle(fileName);
-    this.loadedFile = fileHandle;
-    this.loadedFileName = fileHandle?.name ?? '';
-  }
-
-  @action
-  async loadFileToAudio() {
-    if (!this.loadedFile || !this.audioElement) {
-      return;
-    }
-    this.audioElement.src = URL.createObjectURL(await this.loadedFile.getFile());
+    MediaIndexer.instance.queueFileHandle(this.loadedDirectory, '');
   }
 
   @action
@@ -426,8 +560,13 @@ export class NanoApp extends LitElement {
     return html`
 <div>
   <div><span @click=${this.selectDirectory}>SELECT</span> <span @click=${this.requestDirectoryPermission}>ALLOW</span> <span>${this.loadedDirectoryName}</span> <span @click=${this.indexDirectory}>INDEX</span></div>
-  <div><span @click=${this.selectFile}>SELECT</span> <span @click=${this.requestFilePermission}>ALLOW</span> <span>${this.loadedFileName}</span> <span @click=${this.resolveFileInDirectory}>RESOLVE</span></div>
-  <div><audio id="audio-player" controls></audio> <span @click=${this.loadFileToAudio}>LOAD</span></div>
+  <div>
+    <audio id="audio-player" controls></audio>
+    <span class="click-target" @click=${this.doPreviousTrack}>PREV</span>
+    <span class="click-target" @click=${this.doNextTrack}>NEXT</span>
+    <span class="click-target" @click=${this.doPause}>PLAY/PAUSE</span>
+    <span>${this.currentPlayTrack?.metadata?.title} (${(this.playCursor?.index ?? -1) + 1} / ${this.currentPlayPlaylist?.entryPaths?.length ?? this.playCursor?.trackCount})</span>
+  </div>
 
   <div>
     <textarea id="search-query-textarea" @input=${this.queryChanged} @keypress=${this.queryKeypress}></textarea>
@@ -438,7 +577,7 @@ export class NanoApp extends LitElement {
   <div>Database.instance.searchContextEpoch ${Database.instance.searchContextEpoch}</div>
   <div>Database.instance.searchResultsStatus.status ${Database.instance.searchResultsStatus}</div>
   <div>Database.instance.partialSearchResultsAvailable ${Database.instance.partialSearchResultsAvailable}</div>
-  <div @click=${this.requestUpdate}>REFRESH</div>
+  <div class="click-target" @click=${this.requestUpdate}>REFRESH</div>
   <recycler-view id="track-list-view"></recycler-view>
 
   <div style="display: none;">
