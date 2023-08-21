@@ -38,6 +38,10 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     this.didReady = true;
   }
 
+  get elementsInView(): TElement[] {
+    return Array.from(this.elementsDisplayedMap.values());
+  }
+
   rangeUpdated(min: number, max: number) {
     for (let i = min; i <= max; ++i) {
       const element = this.elementsDisplayedMap.get(i);
@@ -108,11 +112,11 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
         for (const index of toCollect) {
           this.freeElement(index);
         }
-        console.log(`collected: ${toCollect}`);
+        // console.log(`collected: ${toCollect}`);
       }
     }
 
-    console.log(`viewport: scrollTop: ${scrollTop} scrollBottom: ${scrollBottom} viewportMinIndex: ${viewportMinIndex} viewportMaxIndex: ${viewportMaxIndex} alive-count: ${this.elementsDisplayedMap.size} free-count: ${this.elementFreePool.length}`);
+    // console.log(`viewport: scrollTop: ${scrollTop} scrollBottom: ${scrollBottom} viewportMinIndex: ${viewportMinIndex} viewportMaxIndex: ${viewportMaxIndex} alive-count: ${this.elementsDisplayedMap.size} free-count: ${this.elementFreePool.length}`);
 
     this.viewportMinIndex = viewportMinIndex;
     this.viewportMaxIndex = viewportMaxIndex;

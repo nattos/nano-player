@@ -14,6 +14,7 @@ import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
 import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSettingsGroupCommands, CmdSortTypes, getCommands } from './app-commands';
 import { Playlist, PlaylistManager } from './playlist-manager';
+import { Selection, SelectionMode } from './selection';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -30,6 +31,7 @@ export class NanoApp extends LitElement {
   @query('#search-query-textarea') searchQueryTextarea!: HTMLTextAreaElement;
   @query('#audio-player') audioElement!: HTMLAudioElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
+  readonly selection = new Selection<Track>();
   private readonly trackViewHost: TrackViewHost;
   readonly commandParser = new CommandParser(getCommands(this));
 
@@ -40,6 +42,7 @@ export class NanoApp extends LitElement {
       doPlayTrackView(trackView) {
         thisCapture.doPlayTrack(trackView.index, trackView.track);
       },
+      doSelectTrackView: this.doSelectTrackView.bind(this),
     };
     makeObservable(this);
     NanoApp.instance = this;
@@ -162,6 +165,19 @@ export class NanoApp extends LitElement {
       await this.movePlayCursor(0, atIndex, fromSource);
       this.setPlayState(true);
     });
+  }
+
+  doSelectTrackView(trackView: TrackView, mode: SelectionMode) {
+    if (!trackView.track) {
+      return;
+    }
+    this.selection.select(trackView.index, trackView.track, mode);
+    const [primaryIndex, primaryTrack] = this.selection.primary;
+    for (const trackView of this.trackListView.elementsInView) {
+      const index = trackView.index;
+      trackView.selected = this.selection.has(index);
+      trackView.highlighted = index === primaryIndex;
+    }
   }
 
   private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource) {
@@ -571,6 +587,10 @@ export class NanoApp extends LitElement {
       trackView.index = index;
       trackView.track = track;
       trackView.host = this.trackViewHost;
+
+      const [primaryIndex, primaryTrack] = this.selection.primary;
+      trackView.selected = this.selection.has(index);
+      trackView.highlighted = index === primaryIndex;
     };
     this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
     this.trackListView.ready();
