@@ -7,6 +7,7 @@ export interface CommandSpec {
   hasNegativeAtom?: boolean;
   enterAtomContext?: boolean;
   canExitAtomContext?: boolean;
+  executeOnAutoComplete?: boolean;
   argSpec: CommandArgSpec[];
   func: CommandFunc;
 }
@@ -15,6 +16,7 @@ export interface CommandArgSpec {
   isString?: boolean;
   isNumber?: boolean;
   oneof?: string[];
+  oneofProvider?: () => string[];
   subcommands?: CommandSpec[];
   isRepeated?: boolean;
 }
@@ -22,6 +24,9 @@ export interface CommandArgSpec {
 export interface CandidateCompletion {
   byValue?: string;
   byCommand?: CommandSpec;
+  forCommand?: CommandSpec;
+  suffixFragment?: string;
+  resultQuery?: string;
 }
 
 export type CommandFunc = (command: CommandSpec, args: CommandResolvedArg[]) => void;
@@ -46,32 +51,54 @@ export class CommandParser {
 
   constructor(public readonly commands: CommandSpec[]) {}
 
-  public parse(fullQuery: string): CandidateCompletion[] {
-    return this.parseQuery(fullQuery, false)[0];
+  public parse(fullQuery: string, addExecuteAsCompletion = false): CandidateCompletion[] {
+    const [completions, executeFuncs] = this.parseQuery(fullQuery, false);
+    if (addExecuteAsCompletion && executeFuncs) {
+      for (const executeFunc of executeFuncs) {
+        completions.push(executeFunc[0]);
+      }
+    }
+    return completions;
   }
 
   public execute(fullQuery: string): boolean {
-    return this.parseQuery(fullQuery, true)[1];
+    const executeFuncs = this.parseQuery(fullQuery, true)[1];
+    if (executeFuncs.length === 0) {
+      return false;
+    }
+    for (const executeFunc of executeFuncs) {
+      executeFunc[1]();
+    }
+    return true;
   }
 
-  private parseQuery(fullQuery: string, execute: boolean): [completions: CandidateCompletion[], didExecute: boolean] {
-    const [rest, completions, resolvedArgs] = this.parseArgs(fullQuery.trim(), [{subcommands: this.commands}]);
-    console.log(`rest: ${rest} completions: [${completions.map(c => c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>').join('|')}]`);
+  private parseQuery(fullQuery: string, execute: boolean): [completions: CandidateCompletion[], executeFuncs: [CandidateCompletion, () => void][]] {
+    const [rest, newHead, completions, resolvedArgs, forCommand] = this.parseArgs(fullQuery, '', undefined, [{subcommands: this.commands}]);
+    console.log(`rest: ${rest} completions: [${completions.map(c => c.resultQuery ?? c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>').join('|')}]`);
 
-    let didExecute = false;
-    if (execute && resolvedArgs) {
+    const executeFuncs: [CandidateCompletion, () => void][] = [];
+    if (resolvedArgs) {
       for (const resolvedArg of resolvedArgs) {
         const command = resolvedArg.subcommand;
         if (command) {
-          command.command.func(command.command, command.args);
-          didExecute = true;
+          executeFuncs.push([{
+            byCommand: forCommand,
+            forCommand: forCommand,
+            suffixFragment: '',
+            resultQuery: fullQuery,
+          }, () => { command.command.func(command.command, command.args); }]);
         }
       }
     }
-    return [completions, didExecute];
+    return [completions, executeFuncs];
   }
 
-  private parseArgs(rest: string, argSpec: CommandArgSpec[]): [string|undefined,Array<CandidateCompletion>, CommandResolvedArg[]|undefined] {
+  private parseArgs(rest: string, head: string, forCommand: CommandSpec|undefined, argSpec: CommandArgSpec[]): [
+      rest: string|undefined,
+      head: string,
+      candidateCompletions: Array<CandidateCompletion>,
+      resolvedArgs: CommandResolvedArg[]|undefined,
+      forCommand: CommandSpec|undefined] {
     const consumedArgs = new Set<CommandArgSpec>();
     let nonRepeatedCount = argSpec.reduce((a, arg) => a + (arg.isRepeated ? 0 : 1), 0);
     let hasRepeated = argSpec.some(arg => arg.isRepeated);
@@ -81,6 +108,8 @@ export class CommandParser {
     const resolvedArgs: CommandResolvedArg[] = [];
 
     let isFirst = true;
+    let newHead = head;
+    let lastForCommand = forCommand;
     while ((rest.length > 0 || isFirst) && (argSpec.length > consumedArgs.size || hasRepeated)) {
       isFirst = false;
       candidateCompletions.splice(0);
@@ -98,29 +127,38 @@ export class CommandParser {
             if (subcommand.atomPrefix === undefined) {
               isMatch = true;
             } else {
+              const isColonAtom = subcommand.atomPrefix.endsWith(':');
               if (rest.startsWith(subcommand.atomPrefix)) {
                 const candidateRest = rest.slice(subcommand.atomPrefix.length);
-                const isColonAtom = subcommand.atomPrefix.endsWith(':');
                 const nextIsWhitespace = candidateRest.length === 0 || candidateRest.trimStart().length != candidateRest.length;
                 if (isColonAtom || nextIsWhitespace) {
-                  rest = candidateRest.trim();
+                  newHead += subcommand.atomPrefix;
+                  [newHead, rest] = sliceTrimStartAcc(newHead, candidateRest);
                   isMatch = true;
                 }
               } else {
                 if (subcommand.atomPrefix.startsWith(rest)) {
                   if (!candidateCompletionsSet.has(subcommand)) {
+                    const [suffixFragment, resultQuery] =
+                        makeFragments(newHead, !isColonAtom, subcommand.atomPrefix, rest.length);
                     candidateCompletionsSet.add(subcommand);
-                    candidateCompletions.push({byCommand: subcommand});
+                    candidateCompletions.push({
+                        byCommand: subcommand,
+                        suffixFragment: suffixFragment,
+                        resultQuery: resultQuery,
+                        forCommand: forCommand,
+                    });
                   }
                 }
               }
             }
             if (isMatch) {
               // Recurse.
-              console.log(`Matched subcommand: ${subcommand.name}`);
-              const [newRest, subCandidateCompletions, subResolvedArgs] = this.parseArgs(rest, subcommand.argSpec);
+              // console.log(`Matched subcommand: ${subcommand.name}`);
+              const [newRest, parsedNewHead, subCandidateCompletions, subResolvedArgs, parsedForCommand] =
+                  this.parseArgs(rest, newHead, subcommand, subcommand.argSpec);
               if (newRest === undefined || subResolvedArgs === undefined) {
-                return [undefined, subCandidateCompletions, undefined];
+                return [undefined, '', subCandidateCompletions, undefined, undefined];
               }
               resolvedArgs.push({
                 subcommand: {
@@ -129,8 +167,10 @@ export class CommandParser {
                 }
               });
               rest = newRest;
+              newHead = parsedNewHead;
+              lastForCommand = parsedForCommand ?? lastForCommand;
               if (subcommand.canExitAtomContext === false) {
-                return ['', [], resolvedArgs];
+                return ['', '', [], resolvedArgs, parsedForCommand ?? subcommand ?? forCommand];
               }
               break;
             }
@@ -145,19 +185,27 @@ export class CommandParser {
         }
 
         const token = rest.split(/[\s]+/).at(0) ?? rest;
-        if (arg.oneof) {
-          if (arg.oneof.indexOf(token) >= 0) {
+        const oneofValues = arg.oneofProvider?.() ?? arg.oneof;
+        if (oneofValues) {
+          if (oneofValues.indexOf(token) >= 0) {
             isMatch = true;
-            console.log(`Matched oneif arg ${token}`);
+            // console.log(`Matched oneof arg ${token}`);
             resolvedArgs.push({ oneofValue: token });
           } else {
-            for (const oneof of arg.oneof) {
+            for (const oneof of oneofValues) {
               if (!oneof.startsWith(rest)) {
                 continue;
               }
               if (!candidateCompletionsSet.has(oneof)) {
                 candidateCompletionsSet.add(oneof);
-                candidateCompletions.push({byValue: oneof});
+                const [suffixFragment, resultQuery] =
+                    makeFragments(newHead, true, oneof, rest.length);
+                candidateCompletions.push({
+                    byValue: oneof,
+                    suffixFragment: suffixFragment,
+                    resultQuery: resultQuery,
+                    forCommand: forCommand,
+                });
               }
             }
           }
@@ -165,32 +213,39 @@ export class CommandParser {
         if (arg.isNumber) {
           const intValue = utils.parseIntOr(token);
           if (intValue !== undefined) {
-            console.log(`Matched number arg ${token}`);
+            // console.log(`Matched number arg ${token}`);
             resolvedArgs.push({ intValue: intValue });
             isMatch = true;
           } else {
             if (rest.length === 0) {
               if (!candidateCompletionsSet.has('<int>')) {
                 candidateCompletionsSet.add('<int>');
-                candidateCompletions.push({byValue: '<int>'});
+                candidateCompletions.push({
+                    byValue: '<int>',
+                    forCommand: forCommand,
+                });
               }
             }
           }
         }
         if (arg.isString) {
           if (rest.length > 0) {
-            console.log(`Matched string arg ${token}`);
+            // console.log(`Matched string arg ${token}`);
             resolvedArgs.push({ stringValue: rest });
             isMatch = true;
           } else {
             if (!candidateCompletionsSet.has('<string>')) {
               candidateCompletionsSet.add('<string>');
-              candidateCompletions.push({byValue: '<string>'});
+              candidateCompletions.push({
+                  byValue: '<string>',
+                  forCommand: forCommand,
+              });
             }
           }
         }
         if (isMatch) {
-          rest = rest.slice(token.length).trim();
+          newHead += token;
+          [newHead, rest] = sliceTrimStartAcc(newHead, rest.slice(token.length));
         }
         if (isMatch) {
           if (arg.isRepeated !== true) {
@@ -205,10 +260,10 @@ export class CommandParser {
       }
     }
     if (nonRepeatedCount > consumedArgs.size) {
-      console.log(`Incomplete context: ${rest}`);
-      return [undefined, candidateCompletions, undefined];
+      // console.log(`Incomplete context: ${rest}`);
+      return [undefined, head, candidateCompletions, undefined, undefined];
     }
-    return [rest, [], resolvedArgs];
+    return [rest, newHead, [], resolvedArgs, lastForCommand];
   }
 
   public static resolveEnumArg(enumType: object): CommandArgResolverFunc {
@@ -228,7 +283,7 @@ export class CommandParser {
 
   public static resolveStringArg(): CommandArgResolverFunc {
     return (arg: CommandResolvedArg) => {
-      const argValue = arg.stringValue;
+      const argValue = arg.stringValue ?? arg.oneofValue;
       if (!argValue) {
         throw Error(`Arg expected a string.`);
       }
@@ -252,4 +307,30 @@ export class CommandParser {
       thisBoundFunc(...resolvedArgs);
     };
   }
+}
+
+function makeFragments(head: string, needsSpace: boolean, nextToken: string, nextTokenSplit: number) {
+  let [fragment, suffixFragment] = sliceAt(nextToken, nextTokenSplit);
+  if (needsSpace && head.trimEnd().length === head.length) {
+    if (nextTokenSplit === 0) {
+      suffixFragment = ' ' + suffixFragment;
+    }
+  }
+  const resultQuery = head + fragment + suffixFragment;
+  return [suffixFragment, resultQuery];
+}
+
+function sliceTrimStartAcc(head: string, str: string): [head: string, tail: string] {
+  const [newHead, newTail] = sliceTrimStart(str);
+  return [head + newHead, newTail];
+}
+
+function sliceTrimStart(str: string): [head: string, tail: string] {
+  const newTail = str.trimStart();
+  const newHead = str.slice(0, str.length - newTail.length);
+  return [newHead, newTail];
+}
+
+function sliceAt(str: string, index: number): [head: string, tail: string] {
+  return [str.slice(0, index), str.slice(index)];
 }

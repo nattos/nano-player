@@ -63,27 +63,53 @@ export class NanoApp extends LitElement {
       autorun(() => { this.loadTrack(this.currentPlayTrack); });
       autorun(() => { this.setLoadedTrackPlaying(this.isPlaying); });
 
+      (async () => {
+        await Database.instance.waitForLoad();
+        this.queryChanged();
+      })();
+
       MediaIndexer.instance.start();
     });
   }
 
   @action
   private queryChanged() {
-    this.completions = this.commandParser.parse(this.searchQueryTextarea.value);
+    const query = this.searchQueryTextarea.value;
+    this.completions = this.commandParser.parse(query);
+    if (query.trim().length === 0) {
+      this.completions = this.completions
+          .concat(this.commandParser.parse('cmd:library show', true))
+          .concat(this.commandParser.parse('playlist:'))
+          .concat(this.commandParser.parse('cmd:'));
+    }
+  }
+  @action
+  private acceptQueryCompletion(completion: CandidateCompletion) {
+    if (completion.resultQuery) {
+      this.searchQueryTextarea.value = completion.resultQuery;
+      this.queryChanged();
+      if (completion.forCommand?.executeOnAutoComplete) {
+        this.doExecuteQuery();
+      }
+    }
+  }
+
+  @action
+  private doExecuteQuery() {
+    const result = this.commandParser.execute(this.searchQueryTextarea.value);
+    if (result) {
+      this.searchQueryTextarea.value = '';
+      this.queryChanged(); // HACK!!!
+    }
   }
 
   @action
   private queryKeypress(e: KeyboardEvent) {
-    console.log(e);
+    // console.log(e);
     if (e.key === 'Enter') {
       e.preventDefault();
       e.stopPropagation();
-
-      const result = this.commandParser.execute(this.searchQueryTextarea.value);
-      if (result) {
-        this.searchQueryTextarea.value = '';
-        this.queryChanged(); // HACK!!!
-      }
+      this.doExecuteQuery();
     }
   }
 
@@ -212,7 +238,7 @@ export class NanoApp extends LitElement {
     }
     this.playCursor.seek(nextIndex);
 
-    const secondResults = this.playCursor.peekRegion(0, 1);
+    const secondResults = this.playCursor.peekRegion(0, 0);
     let foundTrack: Track|undefined;
     if (secondResults.updatedResultsPromise) {
       const secondFetch = await secondResults.updatedResultsPromise;
@@ -221,7 +247,7 @@ export class NanoApp extends LitElement {
         break;
       }
     } else {
-      for (const track of secondResults.dirtyResults) {
+      for (const track of secondResults.dirtyResults.results) {
         foundTrack = track;
         break;
       }
@@ -371,8 +397,46 @@ export class NanoApp extends LitElement {
     if (playlist === undefined) {
       return;
     }
-    const newEntries = Array.from(playlist.entryPaths).concat(this.tracksInView.slice(0, 3).map(track => track.path));
+
+    const pathPromises: Array<Promise<string>> = [];
+    for (const index of this.selection.all) {
+      pathPromises.push((async () => {
+        const peek = this.trackViewCursor!.peekRegion(index, index, true);
+        let results = peek.dirtyResults;
+        if (peek.updatedResultsPromise) {
+          results = await peek.updatedResultsPromise;
+        }
+        if (results.rebasedStartIndex !== index) {
+          throw new Error('Interrupted.');
+        }
+        return Array.from(results.results)[0]!.path;
+      })());
+    }
+    const paths: string[] = await Promise.all(pathPromises);
+    const newEntries = Array.from(playlist.entryPaths).concat(paths);
     await PlaylistManager.instance.updatePlaylist(playlist.key, newEntries);
+    this.updateTrackDataInViewport();
+
+    console.log(playlist.entryPaths.join(', '));
+  }
+
+  @action
+  async doPlaylistRemoveSelected() {
+    if (this.trackViewPlaylist === undefined) {
+      return;
+    }
+    const playlist = await PlaylistManager.instance.getPlaylist(this.trackViewPlaylist);
+    if (playlist === undefined) {
+      return;
+    }
+
+    const indicesToRemove = Array.from(this.selection.all).sort().reverse();
+    const newEntries = Array.from(playlist.entryPaths);
+    for (const indexToRemove of indicesToRemove) {
+      newEntries.splice(indexToRemove, 1);
+    }
+    await PlaylistManager.instance.updatePlaylist(playlist.key, newEntries);
+    this.selection.clear();
     this.updateTrackDataInViewport();
 
     console.log(playlist.entryPaths.join(', '));
@@ -430,7 +494,7 @@ export class NanoApp extends LitElement {
   private trackViewPlaylist?: string;
   private trackViewSortContext = SortContext.Index;
   private trackViewCursor?: TrackCursor;
-  @observable tracksInView: Track[] = [];
+  @observable tracksInView: Array<Track|undefined> = [];
   tracksInViewBaseIndex = 0;
 
   @observable completions: CandidateCompletion[] = [];
@@ -453,19 +517,20 @@ export class NanoApp extends LitElement {
     const dirtyResults = results.dirtyResults;
     const updatedResultsPromise = results.updatedResultsPromise;
 
-    this.tracksInView = Array.from(dirtyResults);
-    this.tracksInViewBaseIndex = peekMin;
-    this.trackListView?.rangeUpdated(peekMin, peekMax);
+    this.tracksInView = Array.from(dirtyResults.results);
+    this.tracksInViewBaseIndex = dirtyResults.rebasedStartIndex;
+    this.trackListView?.rangeUpdated(dirtyResults.rebasedStartIndex, dirtyResults.rebasedEndIndex);
     if (updatedResultsPromise) {
       updatedResultsPromise.then(action((updatedResults) => {
         console.log("Track results updated async");
         this.tracksInView = Array.from(updatedResults.results);
-        this.tracksInViewBaseIndex = peekMin;
-        this.trackListView?.rangeUpdated(peekMin, peekMax);
-        if (updatedResults.count !== undefined) {
-          this.trackListView.totalCount = updatedResults.count;
-        }
+        this.tracksInViewBaseIndex = updatedResults.rebasedStartIndex;
+        this.trackListView?.rangeUpdated(updatedResults.rebasedStartIndex, updatedResults.rebasedEndIndex);
+        this.trackListView.totalCount = updatedResults.totalCount;
       }));
+    }
+    if (results.contextChanged) {
+      this.selection.clear();
     }
   }
 
@@ -561,7 +626,11 @@ export class NanoApp extends LitElement {
   <div>
     <textarea id="search-query-textarea" @input=${this.queryChanged} @keypress=${this.queryKeypress}></textarea>
     <span>
-      ${this.completions.map(c => c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>').join('|')}
+    ${this.completions.map(c => html`
+      <span class="click-target" @click=${() => this.acceptQueryCompletion(c)}>
+        ${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}
+      </span>
+    `)}
     </span>
   </div>
   <div>Database.instance.searchContextEpoch ${Database.instance.searchContextEpoch}</div>

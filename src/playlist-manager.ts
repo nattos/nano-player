@@ -30,6 +30,10 @@ export class PlaylistManager {
     this.queue.push(async () => { await Database.instance.waitForLoad(); });
   }
 
+  getPlaylistNamesDirty(): string[] {
+    return Array.from(Database.instance.getPlaylists().map(playlist => playlist.name)).sort();
+  }
+
   async getPlaylist(key: string): Promise<Playlist|undefined> {
     let playlist = this.playlists.get(key);
     if (playlist !== undefined) {

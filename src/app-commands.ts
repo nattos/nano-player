@@ -1,5 +1,6 @@
 import { NanoApp } from "./app";
 import { CommandSpec, CommandParser, CommandResolvedArg } from "./command-parser";
+import { PlaylistManager } from "./playlist-manager";
 
 export enum CmdSortTypes {
   Title = 'title',
@@ -33,6 +34,8 @@ function executeSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]
 }
 
 export function getCommands(app: NanoApp) {
+  const playlistNameProvider = () => PlaylistManager.instance.getPlaylistNamesDirty();
+
   const commands: CommandSpec[] = [
     {
       name: 'Command palette',
@@ -54,6 +57,7 @@ export function getCommands(app: NanoApp) {
                   oneof: Object.values(CmdLibraryPathsCommands),
                 },
               ],
+              executeOnAutoComplete: true,
               func: CommandParser.bindFunc(app.doLibraryPathsCmd, app, CommandParser.resolveEnumArg(CmdLibraryPathsCommands)),
             },
             {
@@ -66,6 +70,7 @@ export function getCommands(app: NanoApp) {
                   oneof: Object.values(CmdSortTypes),
                 },
               ],
+              executeOnAutoComplete: true,
               func: CommandParser.bindFunc(app.doSortList, app, CommandParser.resolveEnumArg(CmdSortTypes)),
             },
             {
@@ -74,6 +79,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Plays selected track.',
               atomPrefix: 'play-selected',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doPlaySelected.bind(app),
             },
             {
@@ -82,6 +88,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Resumes playback if paused or stopped, or rewinds to the beginning of the current track if already playing.',
               atomPrefix: 'play',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doPlay.bind(app),
             },
             {
@@ -90,6 +97,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Toggles playback play/pause.',
               atomPrefix: 'pause',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doPause.bind(app),
             },
             {
@@ -98,6 +106,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Stops playback, rewinding to the beginning of the current track.',
               atomPrefix: 'stop',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doStop.bind(app),
             },
             {
@@ -106,6 +115,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Moves playback to the previous track.',
               atomPrefix: 'prev',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doPreviousTrack.bind(app),
             },
             {
@@ -114,6 +124,7 @@ export function getCommands(app: NanoApp) {
               desc: 'Moves playback to the next track.',
               atomPrefix: 'next',
               argSpec: [],
+              executeOnAutoComplete: true,
               func: app.doNextTrack.bind(app),
             },
             {
@@ -126,6 +137,7 @@ export function getCommands(app: NanoApp) {
                   oneof: Object.values(CmdLibraryCommands),
                 },
               ],
+              executeOnAutoComplete: true,
               func: CommandParser.bindFunc(app.doLibraryCmd, app, CommandParser.resolveEnumArg(CmdLibraryCommands)),
             },
             {
@@ -143,9 +155,10 @@ export function getCommands(app: NanoApp) {
                       atomPrefix: 'show',
                       argSpec: [
                         {
-                          isString: true,
+                          oneofProvider: playlistNameProvider,
                         },
                       ],
+                      executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistShow, app, CommandParser.resolveStringArg()),
                     },
                     {
@@ -155,10 +168,20 @@ export function getCommands(app: NanoApp) {
                       atomPrefix: 'add-to',
                       argSpec: [
                         {
-                          isString: true,
+                          oneofProvider: playlistNameProvider,
                         },
                       ],
+                      executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistAddSelected, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:playlist remove
+                      name: 'Remove from playlist',
+                      desc: 'Remove selected tracks from the current playlist',
+                      atomPrefix: 'remove',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doPlaylistRemoveSelected, app),
                     },
                     {
                       // cmd:playlist new <playlist-name>
@@ -179,9 +202,10 @@ export function getCommands(app: NanoApp) {
                       atomPrefix: 'clear',
                       argSpec: [
                         {
-                          isString: true,
+                          oneofProvider: playlistNameProvider,
                         },
                       ],
+                      executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistClear, app, CommandParser.resolveStringArg()),
                     },
                     {
@@ -190,6 +214,7 @@ export function getCommands(app: NanoApp) {
                       desc: '',
                       atomPrefix: 'debug-list',
                       argSpec: [],
+                      executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistDebugList, app),
                     },
                   ],
@@ -212,10 +237,11 @@ export function getCommands(app: NanoApp) {
       canExitAtomContext: false,
       argSpec: [
         {
-          isString: true,
-        }
+          oneofProvider: playlistNameProvider,
+        },
       ],
-      func: () => {},
+      executeOnAutoComplete: true,
+      func: CommandParser.bindFunc(app.doPlaylistShow, app, CommandParser.resolveStringArg()),
     },
     {
       // <search> <query>...

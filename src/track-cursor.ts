@@ -14,12 +14,15 @@ export interface TrackPositionAnchor {
 }
 
 export interface TrackUpdatedResults {
-  results: Iterable<Track>;
-  count?: number;
+  rebasedStartIndex: number;
+  rebasedEndIndex: number;
+  results: Iterable<Track|undefined>;
+  totalCount: number;
 }
 
 export interface TrackPeekResult {
-  dirtyResults: Iterable<Track>;
+  contextChanged: boolean;
+  dirtyResults: TrackUpdatedResults;
   updatedResultsPromise: Promise<TrackUpdatedResults>|undefined;
 }
 
@@ -114,7 +117,7 @@ export class TrackCursor {
 
   async seekToAnchor() {}
 
-  peekRegion(startDelta: number, endDelta: number): TrackPeekResult {
+  peekRegion(startDelta: number, endDelta: number, absolute = false): TrackPeekResult {
     this.checkDatabaseDirty();
     const source = NanoApp.instance!.resolveSource(this.sourceField);
 
@@ -132,10 +135,10 @@ export class TrackCursor {
 
     const missingBlocks: number[] = [];
     const regionBlocks: Array<Track[]|undefined> = [];
-    let dirtyResultsGenerator;
+    let dirtyResults: TrackUpdatedResults;
     {
-      const startIndex = currentFromPos + startDelta;
-      const endIndex = currentFromPos + endDelta;
+      const startIndex = absolute ? startDelta : (currentFromPos + startDelta);
+      const endIndex = absolute ? endDelta : (currentFromPos + endDelta);
       const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
       const endBlock = TrackCursor.indexToBlock(endIndex);
 
@@ -147,7 +150,14 @@ export class TrackCursor {
         regionBlocks.push(cachedBlock);
       }
 
-      dirtyResultsGenerator = this.tracksFromRegionBlocksGenerator(regionBlocks, startBlock, startIndex, endIndex);
+      const dirtyResultsGenerator = this.tracksFromRegionBlocksGenerator(regionBlocks, startBlock, startIndex, endIndex);
+      dirtyResults = {
+        rebasedStartIndex: startIndex,
+        rebasedEndIndex: endIndex,
+        results: dirtyResultsGenerator,
+        totalCount: this.cachedTrackCount,
+      }
+
 
       if (databaseDirty) {
         // TODO: Handle this.databaseDirty better.
@@ -155,7 +165,7 @@ export class TrackCursor {
       }
     }
 
-    let trackCountPromise: Promise<number|undefined>;
+    let trackCountPromise: Promise<number>;
     if (databaseDirty) {
       trackCountPromise = (async () => {
         let updatedTrackCount = await this.database.countTracks(source);
@@ -163,7 +173,7 @@ export class TrackCursor {
         return updatedTrackCount;
       })();
     } else {
-      trackCountPromise = Promise.resolve(undefined);
+      trackCountPromise = Promise.resolve(this.cachedTrackCount);
     }
 
     const updateBlocksPromise = missingBlocks.length <= 0 && !databaseDirty ? undefined : trackCountPromise.then(async (updatedTrackCount) => {
@@ -181,8 +191,8 @@ export class TrackCursor {
         this.currentIndex = reanchorFromPos;
       }
 
-      const startIndex = reanchorFromPos + startDelta;
-      const endIndex = reanchorFromPos + endDelta;
+      const startIndex = absolute ? startDelta : (reanchorFromPos + startDelta);
+      const endIndex = absolute ? endDelta : (reanchorFromPos + endDelta);
       const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
       const endBlock = TrackCursor.indexToBlock(endIndex);
 
@@ -215,53 +225,28 @@ export class TrackCursor {
       await Promise.all(fetchPromises);
       const generator = this.tracksFromRegionBlocksGenerator(updatedBlocks, startBlock, startIndex, endIndex);
 
-      return {
+      return utils.upcast<TrackUpdatedResults>({
+        rebasedStartIndex: startIndex,
+        rebasedEndIndex: endIndex,
         results: generator,
-        count: updatedTrackCount,
-      };
+        totalCount: updatedTrackCount,
+      });
     });
 
     return {
-      dirtyResults: dirtyResultsGenerator,
+      contextChanged: databaseDirty,
+      dirtyResults: dirtyResults,
       updatedResultsPromise: updateBlocksPromise,
     };
   }
 
-  private* tracksFromRegionBlocksGenerator(regionBlocks: Array<Track[]|undefined>, startBlock: number, startIndex: number, endIndex: number): Iterable<Track> {
-    if (regionBlocks.length <= 0) {
-      return;
-    }
-    let regionBlockIndex = 0;
-    let regionStartIndex = TrackCursor.blockStartIndex(startBlock + regionBlockIndex);
-    let regionEndIndex = TrackCursor.blockEndIndex(startBlock + regionBlockIndex);
-    let regionBlock = regionBlocks[regionBlockIndex];
-    if (regionBlock === undefined) {
-      return;
-    }
+  private* tracksFromRegionBlocksGenerator(regionBlocks: Array<Track[]|undefined>, startBlock: number, startIndex: number, endIndex: number): Iterable<Track|undefined> {
     for (let index = startIndex; index <= endIndex; ++index) {
-      while (true) {
-        if (index <= regionEndIndex) {
-          break;
-        }
-        regionBlockIndex++;
-        if (regionBlockIndex >= regionBlocks.length) {
-          return;
-        }
-        regionStartIndex = TrackCursor.blockStartIndex(startBlock + regionBlockIndex);
-        regionEndIndex = TrackCursor.blockEndIndex(startBlock + regionBlockIndex);
-        regionBlock = regionBlocks[regionBlockIndex];
-        if (regionBlock === undefined) {
-          return;
-        }
-      }
+      let regionBlockIndex = TrackCursor.indexToBlock(index);
+      let relativeBlockIndex = regionBlockIndex - startBlock;
+      let regionStartIndex = TrackCursor.blockStartIndex(regionBlockIndex);
       const indexInRegionBlock = index - regionStartIndex;
-      if (indexInRegionBlock < 0) {
-        continue;
-      }
-      if (indexInRegionBlock >= regionBlock.length) {
-        return;
-      }
-      yield regionBlock[indexInRegionBlock];
+      yield regionBlocks.at(relativeBlockIndex)?.at(indexInRegionBlock);
     }
   }
 

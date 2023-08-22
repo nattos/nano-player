@@ -76,7 +76,7 @@ export class Selection<T> {
 
   clear() {
     this.selectFromRangeIndex = 0;
-    this.primaryIndex = undefined;
+    this.primaryIndex = 0;
     this.primaryValue = undefined;
     this.selectedSet.clear();
     this.onSelectionChanged();
