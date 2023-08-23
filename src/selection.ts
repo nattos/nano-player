@@ -1,6 +1,7 @@
 import * as utils from './utils';
 
 export enum SelectionMode {
+  SetPrimary,
   Select,
   Add,
   Subtract,
@@ -29,6 +30,10 @@ export class Selection<T> {
     this.selectFromRangeIndex = index;
     this.selectToRangeIndex = index;
     switch (mode) {
+      case SelectionMode.SetPrimary:
+        this.selectFromRangeIndex = oldSelectFromRangeIndex;
+        this.selectToRangeIndex = oldSelectToRangeIndex;
+        break;
       default:
       case SelectionMode.Select:
         this.selectedSet.clear();

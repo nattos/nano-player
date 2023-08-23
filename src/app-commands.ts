@@ -44,6 +44,7 @@ export function getCommands(app: NanoApp) {
       enterAtomContext: true,
       canExitAtomContext: false,
       func: executeSubcommandsFunc,
+      executeOnAutoComplete: true,
       argSpec: [
         {
           subcommands: [

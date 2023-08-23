@@ -1,6 +1,8 @@
 import { html, css, LitElement, PropertyValueMap } from 'lit';
 import {} from 'lit/html';
-import { customElement, query} from 'lit/decorators.js';
+import { customElement, query } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
+import { styleMap } from 'lit/directives/style-map.js';
 import { action, autorun, runInAction, observable, observe, makeObservable } from 'mobx';
 import { RecyclerView } from './recycler-view';
 import { CandidateCompletion, CommandParser } from './command-parser';
@@ -22,14 +24,9 @@ RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 export class NanoApp extends LitElement {
   static instance?: NanoApp;
 
-  static styles = css`
-.click-target {
-  user-select: none;
-}
-  `;
-
   @query('#search-query-textarea') searchQueryTextarea!: HTMLTextAreaElement;
   @query('#audio-player') audioElement!: HTMLAudioElement;
+  @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
   readonly selection = new Selection<Track>();
   private readonly trackViewHost: TrackViewHost;
@@ -44,6 +41,7 @@ export class NanoApp extends LitElement {
       },
       doSelectTrackView: this.doSelectTrackView.bind(this),
     };
+    this.selection.onSelectionChanged.add(this.updateSelectionInTrackView.bind(this));
     makeObservable(this);
     NanoApp.instance = this;
   }
@@ -170,8 +168,11 @@ export class NanoApp extends LitElement {
   }
 
   @observable isPlaying = false;
+  @observable currentPlayProgress = 0;
+  @observable currentPlayProgressFraction = 0;
   @observable currentPlayTrack: Track|null = null;
   @observable currentPlayPlaylist: Playlist|null = null;
+  private playLastDelta = 1;
   private playCursor?: TrackCursor;
   private playOpQueue = new utils.OperationQueue();
 
@@ -198,6 +199,10 @@ export class NanoApp extends LitElement {
       return;
     }
     this.selection.select(trackView.index, trackView.track, mode);
+    this.updateSelectionInTrackView();
+  }
+
+  private updateSelectionInTrackView() {
     const [primaryIndex, primaryTrack] = this.selection.primary;
     for (const trackView of this.trackListView.elementsInView) {
       const index = trackView.index;
@@ -207,6 +212,8 @@ export class NanoApp extends LitElement {
   }
 
   private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource) {
+    this.playLastDelta = delta < 0 ? -1 : 1;
+
     let needsInitialSeek = false;
     if (!this.playCursor) {
       this.playCursor = Database.instance.cursor(
@@ -224,7 +231,7 @@ export class NanoApp extends LitElement {
     if (firstResults.updatedResultsPromise) {
       await firstResults.updatedResultsPromise;
     }
-    let nextIndex;
+    let nextIndex: number;
     if (absPos === undefined) {
       nextIndex = this.playCursor.index + delta;
     } else {
@@ -262,6 +269,10 @@ export class NanoApp extends LitElement {
       console.log(`currentPlayTrack: ${foundTrack?.path}`);
       this.currentPlayTrack = foundTrack ?? null;
       this.currentPlayPlaylist = fromPlaylist ?? null;
+      if (foundTrack) {
+        this.selection.select(nextIndex, foundTrack, SelectionMode.SetPrimary);
+      }
+      this.cancelAudioSeek();
     });
   }
 
@@ -272,6 +283,14 @@ export class NanoApp extends LitElement {
   }
 
   private setPlayPosition(positionFraction: number) {
+    runInAction(() => {
+      if (this.audioElement.duration > 0) {
+        const pos = this.audioElement.duration * positionFraction;
+        this.audioElement.currentTime = pos;
+        this.currentPlayProgress = pos;
+        this.currentPlayProgressFraction = positionFraction;
+      }
+    });
   }
 
   @action
@@ -591,9 +610,8 @@ export class NanoApp extends LitElement {
     }
     try {
       const file = await track.fileHandle.getFile();
-      const wasPlaying = !this.audioElement.paused;
       this.audioElement.src = URL.createObjectURL(file);
-      this.setLoadedTrackPlaying(wasPlaying);
+      this.setLoadedTrackPlaying(this.isPlaying);
     } catch (e) {
       console.error(e);
       this.audioElement.src = '';
@@ -612,11 +630,152 @@ export class NanoApp extends LitElement {
     }
   }
 
+  private onAudioEnded() {
+    this.doNextTrack();
+  }
+
+  private onAudioError() {
+    this.movePlayCursor(this.playLastDelta);
+  }
+
+  private onAudioTimeUpdate() {
+    const loadedTrack = this.currentPlayTrack;
+    setTimeout(() => { runInAction(() => {
+      if (this.currentPlayTrack !== loadedTrack) {
+        return;
+      }
+      const pos = this.audioElement!.currentTime;
+      const duration = this.audioElement!.duration;
+      this.currentPlayProgress = pos;
+      this.currentPlayProgressFraction = duration > 0 ? (pos / duration) : 0;
+    }); });
+  }
+
+  private isAudioSeeking = false;
+  private audioSeekingPointerId = 0;
+
+  @action
+  private onAudioStartSeek(e: PointerEvent) {
+    if (this.isAudioSeeking || e.button !== 0) {
+      return;
+    }
+    this.isAudioSeeking = true;
+    this.audioSeekingPointerId = e.pointerId;
+    this.playerSeekbarElement.setPointerCapture(this.audioSeekingPointerId);
+    e.preventDefault()
+    window.addEventListener('pointermove', this.onAudioContinueSeek.bind(this));
+    window.addEventListener('pointerup', this.onAudioEndSeek.bind(this));
+    window.addEventListener('pointercancel', this.onAudioEndSeek.bind(this));
+    this.audioDoSeek(e.pageX);
+  }
+
+  @action
+  private onAudioContinueSeek(e: PointerEvent) {
+    if (!this.isAudioSeeking || e.pointerId !== this.audioSeekingPointerId) {
+      return;
+    }
+    this.audioDoSeek(e.pageX);
+  }
+
+  @action
+  private onAudioEndSeek(e: PointerEvent) {
+    if (!this.isAudioSeeking || e.pointerId !== this.audioSeekingPointerId) {
+      return;
+    }
+    this.cancelAudioSeek();
+  }
+
+  private cancelAudioSeek() {
+    if (!this.isAudioSeeking) {
+      return;
+    }
+    this.playerSeekbarElement.releasePointerCapture(this.audioSeekingPointerId);
+    this.isAudioSeeking = false;
+    console.log('onAudioEndSeek');
+    window.removeEventListener('pointermove', this.onAudioContinueSeek.bind(this));
+    window.removeEventListener('pointerup', this.onAudioEndSeek.bind(this));
+    window.removeEventListener('pointercancel', this.onAudioEndSeek.bind(this));
+  }
+
+  private audioDoSeek(pageX: number) {
+    const clientRect = this.playerSeekbarElement.getBoundingClientRect();
+    const fraction = (pageX - clientRect.left) / Math.max(1, clientRect.width);
+    this.setPlayPosition(fraction);
+  }
+
+  static styles = css`
+.click-target {
+  user-select: none;
+}
+
+.player {
+  --player-height: 7em;
+  background-color: aquamarine;
+  position: fixed;
+  bottom: 0px;
+  left: 0px;
+  right: 0px;
+  height: var(--player-height);
+  display: grid;
+  grid-auto-columns: auto minmax(0, 1fr) auto;
+  grid-auto-rows: 0.6fr 1fr;
+}
+.player-artwork {
+  height: var(--player-height);
+  width: var(--player-height);
+  background-color: blueviolet;
+  grid-area: 1 / 1 / span 2 / span 1;
+}
+.player-info {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  margin: 0 1em;
+  gap: 1em;
+}
+.player-info > div {
+  flex-shrink: 1;
+  flex-grow: 1;
+  flex-basis: auto;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.player-title {}
+.player-artist {}
+.player-album {}
+.player-seekbar {
+  grid-area: 2 / 2 / span 1 / span 3;
+  background-color: blue;
+}
+.player-seekbar-bar {
+  height: 100%;
+  background-color: crimson;
+}
+.player-controls {
+  display: flex;
+  gap: 1em;
+  margin: 0 3em 0 1em;
+  align-items: center;
+  justify-content: flex-end;
+  width: 170px;
+  white-space: nowrap;
+}
+  `;
+
   renderInner() {
     return html`
 <div>
   <div>
-    <audio id="audio-player" controls></audio>
+    <audio
+        id="audio-player"
+        style="display: none;"
+        @ended=${this.onAudioEnded}
+        @error=${this.onAudioError}
+        @timeupdate=${this.onAudioTimeUpdate}
+        >
+    </audio>
     <span class="click-target" @click=${this.doPreviousTrack}>PREV</span>
     <span class="click-target" @click=${this.doNextTrack}>NEXT</span>
     <span class="click-target" @click=${this.doPause}>PLAY/PAUSE</span>
@@ -643,6 +802,31 @@ export class NanoApp extends LitElement {
   ${this.tracksInView.map(track => html`
     <div>${track?.path}</div>
   `)}
+  </div>
+
+  <div class="player">
+    <div class="player-artwork"></div>
+    <div class="player-info">
+      <div class="player-title">${this.currentPlayTrack?.metadata?.title}</div>
+      <div class="player-artist">${this.currentPlayTrack?.metadata?.artist}</div>
+      <div class="player-album">${this.currentPlayTrack?.metadata?.album}</div>
+    </div>
+    <div class="player-controls">
+      <span class="click-target" @click=${this.doPreviousTrack}>|<|</span>
+      <span class="click-target" @click=${this.doPlay}>|></span>
+      <span class="click-target" @click=${this.doPause}>||</span>
+      <span class="click-target" @click=${this.doStop}>@</span>
+      <span class="click-target" @click=${this.doNextTrack}>|>|</span>
+      <span class="click-target" @click=${this.doNextTrack}>Q</span>
+    </div>
+    <div
+        id="player-seekbar"
+        class="player-seekbar click-target"
+        @pointerdown=${this.onAudioStartSeek}
+        >
+      <div class="player-seekbar-bar" style=${styleMap({'width': `${Math.max(0, Math.min(1, this.currentPlayProgressFraction)) * 100}%`})}>
+      </div>
+    </div>
   </div>
 </div>
 `;
