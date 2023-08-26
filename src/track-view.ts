@@ -163,7 +163,7 @@ export class TrackView extends LitElement {
   <div class="col-duration">${utils.formatDuration(this.track?.metadata?.duration)}</div>
   <div class="col-artist">${this.track?.metadata?.artist}</div>
   <div class="col-album">${this.track?.metadata?.album}</div>
-  <div class="col-track-number">${this.track?.metadata?.trackNumber} / ${this.track?.metadata?.trackTotal}</div>
+  <div class="col-track-number">${formatIntegerFraction(this.track?.metadata?.trackNumber, this.track?.metadata?.trackTotal)}</div>
   <div class="col-path-part">${this.extendedMetadata.pathParts?.at(0)}</div>
   <div class="col-path-part">${this.extendedMetadata.pathParts?.at(1)}</div>
   <div class="col-path-part">${this.extendedMetadata.pathParts?.at(2)}</div>
@@ -171,4 +171,14 @@ export class TrackView extends LitElement {
 </div>
     `;
   }
+}
+
+function formatIntegerFraction(numerator: number|undefined, denominator: number|undefined) {
+  if (numerator === undefined) {
+    return '';
+  }
+  if (denominator === undefined) {
+    return `${numerator}`;
+  }
+  return `${numerator} / ${denominator}`;
 }
