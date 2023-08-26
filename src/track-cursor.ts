@@ -5,17 +5,14 @@ import * as constants from './constants';
 import { NanoApp } from "./app";
 
 export interface TrackPositionAnchor {
-  index?: number;
-  indexRangeMin?: number;
-  indexRangeMax?: number;
-  path?: string;
-  pathRangeMin?: string;
-  pathRangeMax?: string;
+  index: number;
+  path: string;
 }
 
 export interface TrackUpdatedResults {
   rebasedStartIndex: number;
   rebasedEndIndex: number;
+  rebasedDelta?: number;
   results: Iterable<Track|undefined>;
   totalCount: number;
 }
@@ -50,7 +47,7 @@ export class TrackCursor {
       primarySource: ListPrimarySource,
       secondarySource: string|undefined,
       sortContext: SortContext|undefined,
-      public anchor: TrackPositionAnchor,
+      public anchor?: TrackPositionAnchor,
       ) {
     this.sourceField = {
       source: primarySource,
@@ -107,7 +104,7 @@ export class TrackCursor {
     return this.cachedTrackCount;
   }
 
-  setAnchor(anchor: TrackPositionAnchor) {
+  setAnchor(anchor: TrackPositionAnchor|undefined) {
     this.anchor = anchor;
   }
 
@@ -125,6 +122,8 @@ export class TrackCursor {
     this.databaseDirty = false;
 
     let reanchorFromPos = this.currentIndex;
+    const reanchorFromAnchor = this.anchor;
+    let reanchoredDelta = 0;
     let currentFromPos = this.currentIndex;
     if (currentFromPos === Infinity || currentFromPos >= this.cachedTrackCount) {
       currentFromPos = this.cachedTrackCount - 1;
@@ -170,6 +169,23 @@ export class TrackCursor {
       trackCountPromise = (async () => {
         let updatedTrackCount = await this.database.countTracks(source);
         this.cachedTrackCount = updatedTrackCount;
+
+        // Reanchor.
+        if (reanchorFromAnchor) {
+          const peekAnchorTracks = await this.database.fetchTracksInRange(source, reanchorFromAnchor.index, reanchorFromAnchor.index);
+          if (peekAnchorTracks.at(0)?.path === reanchorFromAnchor.path) {
+            // Anchor is valid.
+          } else {
+            const newIndex = await this.database.findTrackFirstIndex(source, reanchorFromAnchor.path);
+            if (!newIndex) {
+              this.anchor = undefined;
+            } else {
+              reanchoredDelta = newIndex - reanchorFromAnchor.index;
+              this.anchor = { index: newIndex, path: reanchorFromAnchor.path };
+            }
+          }
+        }
+
         return updatedTrackCount;
       })();
     } else {
@@ -178,15 +194,21 @@ export class TrackCursor {
 
     const updateBlocksPromise = missingBlocks.length <= 0 && !databaseDirty ? undefined : trackCountPromise.then(async (updatedTrackCount) => {
       let updatedBlocks = Array.from(regionBlocks);
+      let rebasedDelta: number|undefined = undefined;
       if (databaseDirty) {
         // TODO: Handle this.databaseDirty better.
         updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
 
+        const useOldAnchor = Number.isFinite(reanchorFromPos);
         if (reanchorFromPos === Infinity || reanchorFromPos >= this.cachedTrackCount) {
           reanchorFromPos = this.cachedTrackCount - 1;
         }
         if (reanchorFromPos < 0) {
           reanchorFromPos = 0;
+        }
+        if (useOldAnchor) {
+          reanchorFromPos = Math.max(0, Math.min(this.cachedTrackCount - 1, reanchorFromPos + reanchoredDelta));
+          rebasedDelta = reanchoredDelta;
         }
         this.currentIndex = reanchorFromPos;
       }
@@ -228,6 +250,7 @@ export class TrackCursor {
       return utils.upcast<TrackUpdatedResults>({
         rebasedStartIndex: startIndex,
         rebasedEndIndex: endIndex,
+        rebasedDelta: rebasedDelta,
         results: generator,
         totalCount: updatedTrackCount,
       });

@@ -78,6 +78,7 @@ export class NanoApp extends LitElement {
       MediaIndexer.instance.start();
 
       window.addEventListener('keypress', this.onWindowKeypress.bind(this));
+      window.addEventListener('contextmenu', this.onWindowRightClick.bind(this));
     });
   }
 
@@ -192,6 +193,14 @@ export class NanoApp extends LitElement {
       e.stopPropagation();
       this.doExecuteQuery();
     }
+  }
+
+  @action
+  onCompletionChipClicked(e: MouseEvent, c: CandidateCompletion) {
+    if (e.button !== 0) {
+      return;
+    }
+    this.acceptQueryCompletion(c);
   }
 
   private isQueryInputVisible(): boolean {
@@ -358,6 +367,13 @@ export class NanoApp extends LitElement {
     }
   }
 
+  @action
+  private onWindowRightClick(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.doToggleQueryInputField(undefined, '');
+  }
+
   @observable isPlaying = false;
   @observable currentPlayProgress = 0;
   @observable currentPlayProgressFraction = 0;
@@ -391,6 +407,9 @@ export class NanoApp extends LitElement {
     }
     this.selection.select(trackView.index, trackView.track, mode);
     this.updateSelectionInTrackView();
+    if (trackView.track) {
+      this.trackViewCursor?.setAnchor?.({ index: trackView.index, path: trackView.track.path });
+    }
   }
 
   private updateSelectionInTrackView() {
@@ -408,14 +427,14 @@ export class NanoApp extends LitElement {
     let needsInitialSeek = false;
     if (!this.playCursor) {
       this.playCursor = Database.instance.cursor(
-          ListPrimarySource.Library, undefined, this.trackViewCursor?.sortContext ?? SortContext.Index, {});
+          ListPrimarySource.Library, undefined, this.trackViewCursor?.sortContext ?? SortContext.Index);
       needsInitialSeek = true;
     }
     if (fromSource) {
       this.playCursor.source = fromSource;
     }
     if (needsInitialSeek) {
-      this.playCursor.seek(delta >= 0 ? 0 : Infinity);
+      this.playCursor.seek(delta >= 0 ? -Infinity : Infinity);
     }
 
     const firstResults = this.playCursor.peekRegion(0, 0);
@@ -450,6 +469,7 @@ export class NanoApp extends LitElement {
         break;
       }
     }
+    this.playCursor.setAnchor(foundTrack ? { index: this.playCursor.index, path: foundTrack.path } : undefined);
 
     let fromPlaylist: Playlist|undefined = undefined;
     const resolvedSource = this.resolveSource(this.playCursor.source);
@@ -462,7 +482,7 @@ export class NanoApp extends LitElement {
       this.currentPlayPlaylist = fromPlaylist ?? null;
       if (foundTrack) {
         this.selection.select(nextIndex, foundTrack, SelectionMode.SetPrimary);
-        this.trackListView.ensureVisible(nextIndex, 3);
+        this.trackListView.ensureVisible(nextIndex, constants.ENSURE_VISIBLE_PADDING);
       }
       this.cancelAudioSeek();
     });
@@ -723,7 +743,7 @@ export class NanoApp extends LitElement {
   @action
   private updateTrackDataInViewport() {
     if (!this.trackViewCursor) {
-      this.trackViewCursor = Database.instance.cursor(ListPrimarySource.Auto, undefined, undefined, {});
+      this.trackViewCursor = Database.instance.cursor(ListPrimarySource.Auto, undefined, undefined);
     }
 
     const blockSize = LIST_VIEW_PEEK_LOOKAHEAD;
@@ -732,6 +752,7 @@ export class NanoApp extends LitElement {
     const peekMin = Math.max(0, (Math.floor(viewportMinIndex / blockSize) - 1) * blockSize);
     const peekMax = (Math.ceil(viewportMaxIndex / blockSize) + 1) * blockSize;
     const cursorPos = Math.round((peekMin + peekMax) / 2);
+    const oldAnchor = this.trackViewCursor.anchor;
 
     this.trackViewCursor.seek(cursorPos);
     const results = this.trackViewCursor.peekRegion(peekMin - cursorPos, peekMax - cursorPos);
@@ -741,13 +762,27 @@ export class NanoApp extends LitElement {
     this.tracksInView = Array.from(dirtyResults.results);
     this.tracksInViewBaseIndex = dirtyResults.rebasedStartIndex;
     this.trackListView?.rangeUpdated(dirtyResults.rebasedStartIndex, dirtyResults.rebasedEndIndex);
+
+    const [oldSelectionIndex, oldSelectionTrack] = this.selection.primary;
     if (updatedResultsPromise) {
       updatedResultsPromise.then(action((updatedResults) => {
         console.log("Track results updated async");
         this.tracksInView = Array.from(updatedResults.results);
         this.tracksInViewBaseIndex = updatedResults.rebasedStartIndex;
-        this.trackListView?.rangeUpdated(updatedResults.rebasedStartIndex, updatedResults.rebasedEndIndex);
+        this.trackListView.rangeUpdated(updatedResults.rebasedStartIndex, updatedResults.rebasedEndIndex);
         this.trackListView.totalCount = updatedResults.totalCount;
+        if (updatedResults.rebasedDelta !== undefined) {
+          if (oldAnchor) {
+            let newIndex = oldAnchor.index + updatedResults.rebasedDelta;
+            setTimeout(() => {
+              this.trackListView.ensureVisible(newIndex, constants.ENSURE_VISIBLE_PADDING);
+            });
+          }
+          const newAnchor = this.trackViewCursor?.anchor;
+          if (results.contextChanged && newAnchor && newAnchor.path === oldSelectionTrack?.path) {
+            this.selection.select(newAnchor.index, oldSelectionTrack, SelectionMode.SetPrimary);
+          }
+        }
       }));
     }
     if (results.contextChanged) {
@@ -1133,7 +1168,7 @@ input {
         </div>
         <div class="query-completion-area">
           ${this.completions.map(c => html`
-            <div class="query-completion-chip click-target" @click=${() => this.acceptQueryCompletion(c)}>
+            <div class="query-completion-chip click-target" @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
               <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
               <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
             </div>

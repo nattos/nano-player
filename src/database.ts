@@ -69,13 +69,13 @@ export enum UpdateMode {
 
 const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = utils.getEnumValues(QueryTokenContext);
 const ALL_SORT_CONTEXTS: SortContext[] = utils.getEnumValues(SortContext);
-const SORT_CONTEXTS_TO_METADATA_PATH = {
-  'title': 'metadata.title',
-  'artist': 'metadata.artist',
-  'album': 'metadata.album',
-  'genre': 'metadata.genre',
-  'index': 'generatedMetadata.librarySortKey',
-};
+const SORT_CONTEXTS_TO_METADATA_PATH = new Map<SortContext, string[]>([
+  [SortContext.Title, ['metadata', 'title']],
+  [SortContext.Artist, ['metadata', 'artist']],
+  [SortContext.Album, ['metadata', 'album']],
+  [SortContext.Genre, ['metadata', 'genre']],
+  [SortContext.Index, ['generatedMetadata', 'librarySortKey']],
+]);
 
 export class Database {
   public static get instance() {
@@ -241,8 +241,74 @@ export class Database {
     return `${key}|${''.padStart(constants.PLAYLIST_INDEX_MAX_DIGITS, '9')}`;
   }
 
-  cursor(primarySource: ListPrimarySource, secondarySource: string|undefined, sortContext: SortContext|undefined, anchor: TrackPositionAnchor) {
+  cursor(primarySource: ListPrimarySource, secondarySource: string|undefined, sortContext: SortContext|undefined, anchor?: TrackPositionAnchor) {
     return new TrackCursor(this, primarySource, secondarySource, sortContext, anchor);
+  }
+
+  async findTrackFirstIndex(source: ListSource, path: string): Promise<number|undefined> {
+    const db = await this.database;
+    const sortIndex = this.getSourceIndexlike(source, db);
+    let keyRange = this.getSourceFullKeyRange(source);
+    const fullKeyRangeLower = keyRange?.lower;
+    const fullKeyRangeLowerOpen = keyRange?.lowerOpen;
+
+    const allTracksTable = sortIndex.objectStore.transaction.objectStore(TableNames.AllTracks);
+    const track = await allTracksTable.get(path) as Track;
+    if (!track) {
+      return undefined;
+    }
+
+    if (keyRange === undefined) {
+      const sortContext = source.sortContext ?? SortContext.Index;
+      const metadataPath = SORT_CONTEXTS_TO_METADATA_PATH.get(sortContext);
+      if (!metadataPath) {
+        return undefined;
+      }
+      let metadataKey: any = track;
+      for (const propPath of metadataPath) {
+        metadataKey = metadataKey[propPath];
+        if (metadataKey === undefined) {
+          break;
+        }
+      }
+      if (typeof metadataKey !== 'string') {
+        return undefined;
+      }
+      keyRange = IDBKeyRange.only(metadataKey);
+    }
+
+    const partialKeyRangeLower = keyRange?.lower;
+    const partialKeyRangeLowerOpen = keyRange?.lowerOpen;
+
+    let keyRangeBaseIndex = 0;
+    if (partialKeyRangeLower && partialKeyRangeLower !== fullKeyRangeLower || partialKeyRangeLowerOpen !== fullKeyRangeLowerOpen) {
+      // TODO: Handle closed partialKeyRangeLowerOpen.
+      // We can do that by counting the number of rows in the key partialKeyRangeLower,
+      // and subtracting that out.
+      let baseRange: IDBKeyRange;
+      if (fullKeyRangeLower) {
+        baseRange = IDBKeyRange.bound(fullKeyRangeLower, partialKeyRangeLower, fullKeyRangeLowerOpen, false);
+      } else {
+        baseRange = IDBKeyRange.upperBound(partialKeyRangeLower, true);
+      }
+      keyRangeBaseIndex = await sortIndex.count(baseRange);
+    }
+
+    const cursor = await sortIndex.openCursor(keyRange);
+    let searchIndex = 0;
+    while (cursor) {
+      const track = cursor.value as Track;
+      if (track) {
+        if (track.path === path) {
+          return keyRangeBaseIndex + searchIndex;
+        }
+      }
+      if (!await cursor.advance(1)) {
+        break;
+      }
+      searchIndex++;
+    }
+    return undefined;
   }
 
   async fetchTracksInRange(source: ListSource, min: number, max: number): Promise<Track[]> {
@@ -304,7 +370,7 @@ export class Database {
   private getSourceInnerIndexlike(source: ListSource, db: IDBPDatabase) {
     const searchStatus = this.searchResultsStatus;
     function getTable(name: string) {
-      return db.transaction(name, 'readonly').objectStore(name);
+      return db.transaction([TableNames.AllTracks, name], 'readonly').objectStore(name);
     }
 
     switch (source.source) {
@@ -332,7 +398,7 @@ export class Database {
     if (source.source === ListPrimarySource.Playlist) {
       return store.index(IndexNames.Playlists);
     }
-    return store.index(source.sortContext ?? 'index');
+    return store.index(source.sortContext ?? SortContext.Index);
   }
 
   @action
@@ -363,6 +429,22 @@ export class Database {
           const toUpdate = updatableTracksMap.get(toUpdatePath);
           if (toUpdate === undefined || toUpdate.path !== toUpdatePath) {
             continue;
+          }
+          for (const metadataPath of SORT_CONTEXTS_TO_METADATA_PATH.values()) {
+            let metadataKey: any = toUpdate;
+            for (let i = 0; i < metadataPath.length - 1; ++i) {
+              const propPath = metadataPath[i];
+              let nextMetadataKey = metadataKey[propPath];
+              if (nextMetadataKey === undefined) {
+                nextMetadataKey = {};
+                metadataKey[propPath] = nextMetadataKey;
+              }
+              metadataKey = nextMetadataKey;
+            }
+            const lastPath = metadataPath[metadataPath.length - 1];
+            if (metadataKey[lastPath] === undefined) {
+              metadataKey[lastPath] = '';
+            }
           }
           this.putTrack(toUpdate, tx);
           updatedPaths.push(toUpdatePath);
@@ -635,8 +717,11 @@ export class Database {
       const allSortableTables = [allTracksTable, searchTableA, searchTableB];
       for (const table of allSortableTables) {
         for (const context of ALL_SORT_CONTEXTS) {
-          const keyPath = SORT_CONTEXTS_TO_METADATA_PATH[context];
-          table.createIndex(context, keyPath, { unique: false });
+          const keyPath = SORT_CONTEXTS_TO_METADATA_PATH.get(context);
+          if (!keyPath) {
+            continue;
+          }
+          table.createIndex(context, keyPath.join('.'), { unique: false });
         }
       }
 

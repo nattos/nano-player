@@ -111,6 +111,9 @@ export class TrackView extends LitElement {
   private extendedMetadata: ExtendedMetadata = {};
 
   clicked(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
     let selectMode: SelectionMode;
     if (e.metaKey || e.altKey) {
       selectMode = SelectionMode.Toggle;
@@ -123,7 +126,10 @@ export class TrackView extends LitElement {
   }
 
   @action
-  async dblclick() {
+  async dblclick(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
     this.host?.doPlayTrackView(this);
   }
 
