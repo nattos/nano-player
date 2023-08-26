@@ -89,7 +89,7 @@ export class Database {
   private readonly database: Promise<IDBPDatabase>;
   private readonly updateTrackTables: string[];
 
-  private nextSearchQuery = '';
+  private nextSearchQuery: string[] = [];
   private nextSearchQueryDirty = false;
   private searchQueryUpdateInFlight = Promise.resolve();
   private searchQueryUpdateCancel = new utils.Resolvable<void>();
@@ -456,7 +456,7 @@ export class Database {
     }
   }
 
-  setSearchQuery(query: string) {
+  setSearchQuery(query: string[]) {
     this.nextSearchQuery = query;
     this.nextSearchQueryDirty = true;
     this.searchQueryUpdateCancel.resolve();
@@ -469,12 +469,12 @@ export class Database {
 
       const cancelFlag = new utils.Resolvable<void>();
       this.searchQueryUpdateCancel = cancelFlag;
-      this.searchQueryUpdateInFlight = this.updateSearchTable(this.tokenizeQuery(this.nextSearchQuery), cancelFlag);
+      this.searchQueryUpdateInFlight = this.updateSearchTable(this.canonicalizeQuery(this.nextSearchQuery), cancelFlag);
     })();
   }
 
-  private tokenizeQuery(query: string): string[] {
-    return query.split(/\s/).map(token => token.trim().toLocaleLowerCase()).filter(token => token.length > 0);
+  private canonicalizeQuery(query: string[]): string[] {
+    return query.map(token => token.trim().toLocaleLowerCase()).filter(token => token.length > 0);
   }
 
   private async updateSearchTable(queryTokens: string[], cancelFlag: utils.Resolvable<void>) {
@@ -733,7 +733,7 @@ export class Database {
             utils.merge(toUpdate, track);
           }
         });
-        await this.setSearchQuery("からな　ー");
+        await this.setSearchQuery(["からな　ー"]);
         console.log("done add");
       });
     }

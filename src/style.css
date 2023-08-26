@@ -1,5 +1,28 @@
 
 body {
+  --theme-color1: #051821;
+  --theme-color2: #1A4645;
+  --theme-color3: #266867;
+  --theme-color4: #F58800;
+  --theme-color5: #F8BC24;
+  --theme-bg: #323232;
+  --theme-bg2: #272727;
+  --theme-bg3: #131313;
+  --theme-bg4: #030303;
+  --theme-fg: #FFFFFF;
+  --theme-fg2: #E0E0E0;
+  --theme-fg3: #C0C0C0;
+  --theme-fg4: rgb(112, 112, 112);
+  --theme-hi-bg: var(--theme-color3);
+  --theme-hi-fg: var(--theme-fg);
+  --theme-hi-border: var(--theme-color5);
+  --theme-row-odd-bg: var(--theme-bg);
+  --theme-row-even-bg: var(--theme-bg2);
+
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-weight: 300;
+  color: var(--theme-fg2);
+
+  background-color: var(--theme-bg);
+  color: var(--theme-fg2);
 }

@@ -231,12 +231,38 @@ export function formatIntPadded(value: number, minDigits: number): string {
   return str;
 }
 
-export function filePathWithoutExtension(path: string): string {
-  const splitIndex = path.lastIndexOf('.');
+export function filePathDirectory(path: string): string {
+  const splitIndex = path.lastIndexOf('/');
+  if (splitIndex < 0) {
+    return '';
+  }
+  return path.slice(0, splitIndex);
+}
+
+export function filePathFileName(path: string): string {
+  const splitIndex = path.lastIndexOf('/');
   if (splitIndex < 0) {
     return path;
   }
-  return path.slice(0, splitIndex);
+  return path.slice(splitIndex + 1);
+}
+
+export function filePathFileNameWithoutExtension(path: string): string {
+  const fileName = filePathFileName(path);
+  const splitIndex = fileName.lastIndexOf('.');
+  if (splitIndex < 0) {
+    return fileName;
+  }
+  return fileName.slice(0, splitIndex);
+}
+
+export function filePathExtension(path: string): string {
+  const fileName = filePathFileName(path);
+  const splitIndex = fileName.lastIndexOf('.');
+  if (splitIndex < 0) {
+    return '';
+  }
+  return fileName.slice(splitIndex + 1);
 }
 
 export function* mapAll<TIn, TOut>(values: Iterable<TIn>, callback: (value: TIn) => Iterable<TOut>|undefined) {
@@ -259,6 +285,15 @@ export function* filterUnique<TValue, TKey>(values: Iterable<TValue>, keyFn?: ((
       continue;
     }
     addedSet.add(key);
+    yield value;
+  }
+}
+
+export function* filterNulllike<TValue, TKey>(values: Iterable<TValue|undefined|null>): Iterable<TValue> {
+  for (const value of values) {
+    if (value === undefined || value === null) {
+      continue;
+    }
     yield value;
   }
 }

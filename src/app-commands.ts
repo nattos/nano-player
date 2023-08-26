@@ -33,6 +33,31 @@ function executeSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]
   }
 }
 
+function beginPreviewSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]) {
+  for (const arg of args) {
+    if (arg.subcommand) {
+      arg.subcommand.command.beginPreviewFunc?.(arg.subcommand.command, arg.subcommand.args);
+    }
+  }
+}
+
+function cancelPreviewSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]) {
+  for (const arg of args) {
+    if (arg.subcommand) {
+      arg.subcommand.command.cancelPreviewFunc?.(arg.subcommand.command, arg.subcommand.args);
+    }
+  }
+}
+
+function chipLabelSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]) {
+  for (const arg of args) {
+    if (arg.subcommand) {
+      return arg.subcommand.command.chipLabelFunc?.(arg.subcommand.command, arg.subcommand.args);
+    }
+  }
+  return undefined;
+}
+
 export function getCommands(app: NanoApp) {
   const playlistNameProvider = () => PlaylistManager.instance.getPlaylistNamesDirty();
 
@@ -44,6 +69,9 @@ export function getCommands(app: NanoApp) {
       enterAtomContext: true,
       canExitAtomContext: false,
       func: executeSubcommandsFunc,
+      beginPreviewFunc: beginPreviewSubcommandsFunc,
+      cancelPreviewFunc: cancelPreviewSubcommandsFunc,
+      chipLabelFunc: chipLabelSubcommandsFunc,
       executeOnAutoComplete: true,
       argSpec: [
         {
@@ -140,6 +168,7 @@ export function getCommands(app: NanoApp) {
               ],
               executeOnAutoComplete: true,
               func: CommandParser.bindFunc(app.doLibraryCmd, app, CommandParser.resolveEnumArg(CmdLibraryCommands)),
+              chipLabelFunc: CommandParser.bindChipLabelFunc(app.getLibraryCmdChipLabel, app, CommandParser.resolveEnumArg(CmdLibraryCommands)),
             },
             {
               // cmd:playlist ...
@@ -222,6 +251,9 @@ export function getCommands(app: NanoApp) {
                 },
               ],
               func: executeSubcommandsFunc,
+              beginPreviewFunc: beginPreviewSubcommandsFunc,
+              cancelPreviewFunc: cancelPreviewSubcommandsFunc,
+              chipLabelFunc: chipLabelSubcommandsFunc,
             },
             // TODO: cmd:stop-after
             // TODO: cmd:repeat <none|playlist|one|selected>
@@ -233,6 +265,7 @@ export function getCommands(app: NanoApp) {
       // playlist:<playlist>
       name: 'Open playlist',
       desc: 'Selects specified playlist.',
+      chipLabel: 'playlist',
       atomPrefix: 'playlist:',
       enterAtomContext: true,
       canExitAtomContext: false,
@@ -248,7 +281,9 @@ export function getCommands(app: NanoApp) {
       // <search> <query>...
       name: 'Search',
       desc: 'Filters library or playlist by search terms.',
-      func: () => {},
+      func: app.doSearchAccept.bind(app),
+      beginPreviewFunc: app.doSearchBeginPreview.bind(app),
+      cancelPreviewFunc: app.doSearchCancelPreview.bind(app),
       argSpec: [
         {
           isString: true,

@@ -8,7 +8,8 @@ export function init() {}
 
 @customElement('recycler-view')
 export class RecyclerView<TElement extends HTMLElement, TData> extends LitElement {
-  private static readonly elementCollectCountWaterlevel = 10;
+  private static readonly elementCollectCountWaterlevel = 16;
+  private static readonly elementsInViewPaddingCount = 4;
 
   @query('#scroll-container') scrollContainer!: HTMLElement;
   @query('#content-area') contentArea!: HTMLElement;
@@ -40,6 +41,14 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
 
   get elementsInView(): TElement[] {
     return Array.from(this.elementsDisplayedMap.values());
+  }
+
+  ensureVisible(center: number, padding: number) {
+    if (this.viewportMinIndex > center) {
+      this.scrollContainer.scrollTo({top: (center - padding) * this.rowHeight});
+    } else if (this.viewportMaxIndex <= center) {
+      this.scrollContainer.scrollTo({top: (center + padding) * this.rowHeight - this.scrollContainer.clientHeight});
+    }
   }
 
   rangeUpdated(min: number, max: number) {
@@ -95,17 +104,19 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     const scrollBottom = scrollTop + this.scrollContainer!.clientHeight;
     const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
     const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
+    const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - RecyclerView.elementsInViewPaddingCount));
+    const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + RecyclerView.elementsInViewPaddingCount));
 
     if (this.didReady) {
-      for (let i = viewportMinIndex; i < viewportMaxIndex; ++i) {
+      for (let i = spawnMinIndex; i < spawnMaxIndex; ++i) {
         this.ensureElement(i);
       }
-      const collectWaterlevel = viewportMaxIndex - viewportMinIndex + RecyclerView.elementCollectCountWaterlevel;
+      const collectWaterlevel = spawnMaxIndex - spawnMinIndex + RecyclerView.elementCollectCountWaterlevel;
       if (this.elementsDisplayedMap.size > collectWaterlevel) {
         // Sweep elements.
         const toCollect = [];
         for (const [index, value] of this.elementsDisplayedMap) {
-          if (index < viewportMinIndex || index > viewportMaxIndex) {
+          if (index < spawnMinIndex || index > spawnMaxIndex) {
             toCollect.push(index);
           }
         }
@@ -124,7 +135,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
 
   override render() {
     return html`
-<div id="scroll-container" style="height: 500px; overflow: scroll; position: relative; background-color: beige;" @scroll=${this.onScroll}>
+<div id="scroll-container" style="height: 100%; overflow: scroll; position: relative;" @scroll=${this.onScroll}>
   <div id="content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
   </div>
 </div>

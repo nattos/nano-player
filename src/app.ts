@@ -1,11 +1,11 @@
-import { html, css, LitElement, PropertyValueMap } from 'lit';
+import { html, css, LitElement, PropertyValueMap, render } from 'lit';
 import {} from 'lit/html';
 import { customElement, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
-import { action, autorun, runInAction, observable, observe, makeObservable } from 'mobx';
+import { action, autorun, runInAction, observable, observe, makeObservable, override } from 'mobx';
 import { RecyclerView } from './recycler-view';
-import { CandidateCompletion, CommandParser } from './command-parser';
+import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
 import * as utils from './utils';
 import * as constants from './constants';
 import { TrackView, TrackViewHost } from './track-view';
@@ -24,17 +24,23 @@ RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 export class NanoApp extends LitElement {
   static instance?: NanoApp;
 
-  @query('#search-query-textarea') searchQueryTextarea!: HTMLTextAreaElement;
-  @query('#audio-player') audioElement!: HTMLAudioElement;
+  @query('#query-input') queryInputElement!: HTMLInputElement;
   @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
   readonly selection = new Selection<Track>();
   private readonly trackViewHost: TrackViewHost;
   readonly commandParser = new CommandParser(getCommands(this));
 
+  private readonly audioElement = new Audio();
+
   constructor() {
     super();
     const thisCapture = this;
+
+    this.audioElement.addEventListener('ended', this.onAudioEnded.bind(this));
+    this.audioElement.addEventListener('error', this.onAudioError.bind(this));
+    this.audioElement.addEventListener('timeupdate', this.onAudioTimeUpdate.bind(this));
+
     this.trackViewHost = {
       doPlayTrackView(trackView) {
         thisCapture.doPlayTrack(trackView.index, trackView.track);
@@ -48,6 +54,14 @@ export class NanoApp extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+
+    navigator.mediaSession.setActionHandler('play', this.doPlay.bind(this));
+    navigator.mediaSession.setActionHandler('pause', this.doPause.bind(this));
+    navigator.mediaSession.setActionHandler('seekbackward', () => {});
+    navigator.mediaSession.setActionHandler('seekforward', () => {});
+    navigator.mediaSession.setActionHandler('previoustrack', this.doPreviousTrack.bind(this));
+    navigator.mediaSession.setActionHandler('nexttrack', this.doNextTrack.bind(this));
+
     setTimeout(() => {
       const updateTracks = () => this.updateTrackDataInViewport();
       observe(Database.instance, 'searchResultsStatus', updateTracks);
@@ -61,30 +75,68 @@ export class NanoApp extends LitElement {
       autorun(() => { this.loadTrack(this.currentPlayTrack); });
       autorun(() => { this.setLoadedTrackPlaying(this.isPlaying); });
 
-      (async () => {
-        await Database.instance.waitForLoad();
-        this.queryChanged();
-      })();
-
       MediaIndexer.instance.start();
+
+      window.addEventListener('keypress', this.onWindowKeypress.bind(this));
     });
+  }
+
+  @observable queryInputForceShown = false;
+  private requestFocusQueryInput = false;
+  private queryPreviewing?: CandidateCompletion = undefined;
+
+  @action
+  private doToggleQueryInputField(state?: boolean, initialQuery?: string) {
+    const newState = state ?? !this.queryInputForceShown;
+    if (newState === this.queryInputForceShown) {
+      return;
+    }
+    this.queryInputForceShown = newState;
+    if (this.queryInputForceShown) {
+      if (initialQuery !== undefined) {
+        this.queryInputElement.value = initialQuery;
+      }
+      this.queryChanged();
+      this.requestFocusQueryInput = true;
+    } else {
+      if (!this.isQueryInputVisible()) {
+        this.doSearchCancelPreview();
+      }
+    }
   }
 
   @action
   private queryChanged() {
-    const query = this.searchQueryTextarea.value;
-    this.completions = this.commandParser.parse(query);
+    const query = this.queryInputElement.value;
+    let completions = this.commandParser.parse(query, true);
+    const toPreview = completions.find(entry => entry.isComplete);
+
+    completions = completions.filter(entry => !entry.isComplete);
     if (query.trim().length === 0) {
-      this.completions = this.completions
+      completions = completions
           .concat(this.commandParser.parse('cmd:library show', true))
           .concat(this.commandParser.parse('playlist:'))
           .concat(this.commandParser.parse('cmd:'));
     }
+    this.completions = completions;
+
+    if (this.queryPreviewing?.forCommand && this.queryPreviewing?.resolvedArgs) {
+      this.queryPreviewing.forCommand.cancelPreviewFunc?.(
+          this.queryPreviewing.forCommand, this.queryPreviewing.resolvedArgs);
+    }
+    this.queryPreviewing = toPreview;
+    if (this.queryPreviewing) {
+      if (this.queryPreviewing?.forCommand && this.queryPreviewing?.resolvedArgs) {
+        this.queryPreviewing.forCommand.beginPreviewFunc?.(
+            this.queryPreviewing.forCommand, this.queryPreviewing.resolvedArgs);
+      }
+    }
   }
+
   @action
   private acceptQueryCompletion(completion: CandidateCompletion) {
     if (completion.resultQuery) {
-      this.searchQueryTextarea.value = completion.resultQuery;
+      this.queryInputElement.value = completion.resultQuery;
       this.queryChanged();
       if (completion.forCommand?.executeOnAutoComplete) {
         this.doExecuteQuery();
@@ -94,10 +146,41 @@ export class NanoApp extends LitElement {
 
   @action
   private doExecuteQuery() {
-    const result = this.commandParser.execute(this.searchQueryTextarea.value);
+    if (this.queryPreviewing?.forCommand && this.queryPreviewing?.resolvedArgs) {
+      this.queryPreviewing.forCommand.cancelPreviewFunc?.(
+          this.queryPreviewing.forCommand, this.queryPreviewing.resolvedArgs);
+    }
+    this.queryPreviewing = undefined;
+
+    const query = this.queryInputElement.value;
+    const result = this.commandParser.execute(query);
     if (result) {
-      this.searchQueryTextarea.value = '';
+      this.queryInputElement.value = '';
       this.queryChanged(); // HACK!!!
+      this.queryInputForceShown = false;
+    } else {
+      if (query.trim().length === 0) {
+        this.queryInputElement.value = '';
+        this.queryChanged(); // HACK!!!
+        this.doSearchClear();
+        this.queryInputForceShown = false;
+      }
+    }
+  }
+
+  @action
+  private queryAreaKeypress(e: KeyboardEvent) {
+    console.log(e);
+    // e.preventDefault();
+    e.stopPropagation();
+  }
+
+  @action
+  private queryAreaKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.doToggleQueryInputField(false);
     }
   }
 
@@ -109,6 +192,85 @@ export class NanoApp extends LitElement {
       e.stopPropagation();
       this.doExecuteQuery();
     }
+  }
+
+  private isQueryInputVisible(): boolean {
+    return this.queryInputForceShown;
+  }
+
+  private isQueryUnderlayVisible(): boolean {
+    return this.completions.length !== 0 || this.searchPreviewQuery.length === 0 || this.queryInputElement.value.length <= 3;
+  }
+
+  @action
+  onQueryUnderlayClicked() {
+    this.doToggleQueryInputField(false);
+  }
+
+  private searchAcceptedQuery: string[] = [];
+  private searchPreviewQuery: string[] = [];
+  private prevSearchQuery: string[] = [];
+  private readonly searchUpdateQueue = new utils.OperationQueue();
+
+  @action
+  doSearchAccept(command: CommandSpec, args: CommandResolvedArg[]) {
+    const query = this.searchQueryFromArgs(args);
+    // if (query.length === 0) {
+    //   this.doSearchClear();
+    //   return;
+    // }
+    this.searchAcceptedQuery = query;
+    console.log(`do search: ${query.join(' ')}`);
+    this.updateDatabaseSearchQuery();
+  }
+
+  @action
+  doSearchClear() {
+    this.searchAcceptedQuery = [];
+    this.searchPreviewQuery = [];
+    this.prevSearchQuery = [];
+    Database.instance.setSearchQuery([]);
+  }
+
+  @action
+  doSearchBeginPreview(command: CommandSpec, args: CommandResolvedArg[]) {
+    const query = this.searchQueryFromArgs(args);
+    this.searchPreviewQuery = query;
+    console.log(`do preview: ${query.join(' ')}`);
+    this.updateDatabaseSearchQuery();
+  }
+
+  @action
+  doSearchCancelPreview() {
+    this.searchPreviewQuery = [];
+    this.updateDatabaseSearchQuery();
+  }
+
+  private updateDatabaseSearchQuery(shortWaitCount = 0) {
+    this.searchUpdateQueue.push(async () => {
+      await utils.sleep(0);
+      let nextQuery = this.searchAcceptedQuery;
+      if (this.searchPreviewQuery.length > 0) {
+        nextQuery = this.searchPreviewQuery;
+      }
+      const newQueryStr = nextQuery.join(' ');
+      const oldQueryStr = this.prevSearchQuery.join(' ');
+      if (newQueryStr === oldQueryStr) {
+        return;
+      }
+      if (shortWaitCount < 4 && nextQuery.length > 0 && newQueryStr.length < 3) {
+        await utils.sleep(50);
+        this.updateDatabaseSearchQuery(shortWaitCount + 1);
+        return;
+      }
+      this.prevSearchQuery = nextQuery;
+      Database.instance.setSearchQuery(nextQuery);
+      await utils.sleep(100);
+    });
+  }
+
+  private searchQueryFromArgs(args: CommandResolvedArg[]): string[] {
+    return Array.from(utils.filterNulllike(args.map(arg => arg.oneofValue ?? arg.stringValue)));
   }
 
   @action
@@ -165,6 +327,35 @@ export class NanoApp extends LitElement {
     }
 
     console.log(JSON.stringify(Database.instance.getLibraryPaths()));
+  }
+
+  @action
+  private onWindowKeypress(e: KeyboardEvent) {
+    console.log(e);
+    let captured = true;
+    if (e.key === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doPreviousTrack();
+    } else if (e.key === 'x' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doPlay();
+    } else if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doPause();
+    } else if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doStop();
+    } else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doNextTrack();
+    } else if (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doPause();
+    } else if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doToggleQueryInputField(true, '');
+    } else if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      this.doToggleQueryInputField(true, 'cmd:');
+    } else {
+      captured = false;
+    }
+    if (captured) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 
   @observable isPlaying = false;
@@ -271,6 +462,7 @@ export class NanoApp extends LitElement {
       this.currentPlayPlaylist = fromPlaylist ?? null;
       if (foundTrack) {
         this.selection.select(nextIndex, foundTrack, SelectionMode.SetPrimary);
+        this.trackListView.ensureVisible(nextIndex, 3);
       }
       this.cancelAudioSeek();
     });
@@ -370,6 +562,16 @@ export class NanoApp extends LitElement {
       case CmdLibraryCommands.Show:
         this.doLibraryShow();
         break;
+    }
+  }
+
+  getLibraryCmdChipLabel(command?: CmdLibraryCommands): string|undefined {
+    switch (command) {
+      default:
+      case CmdLibraryCommands.Reindex:
+        return undefined;
+      case CmdLibraryCommands.Show:
+        return 'show';
     }
   }
 
@@ -704,26 +906,66 @@ export class NanoApp extends LitElement {
   }
 
   static styles = css`
+.hidden {
+  visibility: hidden;
+}
+
 .click-target {
   user-select: none;
 }
 
-.player {
-  --player-height: 7em;
-  background-color: aquamarine;
+.outer {
   position: fixed;
-  bottom: 0px;
-  left: 0px;
-  right: 0px;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-flow: column;
+}
+
+.track-view-area {
+  flex-grow: 1;
+  height: 0;
+  position: relative;
+}
+.track-view {
+}
+
+.player {
+  position: relative;
+  flex: none;
+  --player-height: 7em;
+  background-color: var(--theme-bg2);
+  width: 100%;
   height: var(--player-height);
   display: grid;
   grid-auto-columns: auto minmax(0, 1fr) auto;
   grid-auto-rows: 0.6fr 1fr;
 }
+.player-divider {
+  position: absolute;
+  top: -1px;
+  height: 1px;
+  left: 0;
+  right: 0;
+  background-color: var(--theme-bg2);
+}
+.player-top-shade {
+  position: absolute;
+  bottom: 0;
+  height: 3em;
+  left: 0;
+  right: 0;
+  --theme-bg4-alpha: rgba(var(--theme-bg4), 0);
+  background: linear-gradient(0deg, var(--theme-bg4) 0%, transparent 100%);
+  opacity: 0.3;
+  pointer-events: none;
+}
 .player-artwork {
   height: var(--player-height);
   width: var(--player-height);
-  background-color: blueviolet;
+  background-color: var(--theme-bg3);
   grid-area: 1 / 1 / span 2 / span 1;
 }
 .player-info {
@@ -747,64 +989,164 @@ export class NanoApp extends LitElement {
 .player-album {}
 .player-seekbar {
   grid-area: 2 / 2 / span 1 / span 3;
-  background-color: blue;
+  background-color: var(--theme-bg2);
 }
 .player-seekbar-bar {
   height: 100%;
-  background-color: crimson;
+  background-color: var(--theme-color4);
 }
 .player-controls {
   display: flex;
-  gap: 1em;
   margin: 0 3em 0 1em;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-end;
-  width: 170px;
+  width: 15em;
   white-space: nowrap;
 }
+
+.player-controls > .small-button {
+  display: flex;
+  flex-grow: 1;
+}
+.player-controls > .small-button:hover {
+  background-color: var(--theme-color4);
+}
+.player-controls-button-text {
+  margin: auto;
+  letter-spacing: 0.1em;
+}
+
+.query-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-order: 50;
+}
+
+.query-input-underlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: var(--theme-bg4);
+  opacity: 0.5;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.query-input-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-flow: column;
+}
+
+.query-input-area {
+  height: 4em;
+  background-color: var(--theme-bg);
+  margin: 2em 10em;
+  min-width: 300px;
+  border-radius: 2em;
+  border: solid var(--theme-fg2) 1px;
+  pointer-events: auto;
+}
+
+.query-input {
+  position: relative;
+  bottom: 0.075em;
+  width: 100%;
+  height: 100%;
+  font-size: 200%;
+  border: none;
+  background-color: transparent;
+  margin: 0 1em;
+  outline: none;
+}
+
+input {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 300;
+  color: var(--theme-fg);
+}
+
+.query-completion-area {
+  display: flex;
+  justify-content: center;
+  gap: 1em;
+  font-size: 200%;
+  flex-flow: wrap;
+  width: 80%;
+  align-self: center;
+  align-items: center;
+}
+
+.query-completion-chip {
+  overflow: hidden;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+  background-color: var(--theme-color3);
+  border-radius: 1.5em;
+  padding: 0.5em 1em;
+  pointer-events: auto;
+}
+
+.query-completion-chip:hover {
+  background-color: var(--theme-color4);
+}
+
+.query-completion-chip-label {
+}
+
+.query-completion-chip-tag {
+  font-size: 40%;
+  letter-spacing: 0.05em;
+  font-weight: 400;
+}
+
   `;
 
   renderInner() {
     return html`
-<div>
-  <div>
-    <audio
-        id="audio-player"
-        style="display: none;"
-        @ended=${this.onAudioEnded}
-        @error=${this.onAudioError}
-        @timeupdate=${this.onAudioTimeUpdate}
-        >
-    </audio>
-    <span class="click-target" @click=${this.doPreviousTrack}>PREV</span>
-    <span class="click-target" @click=${this.doNextTrack}>NEXT</span>
-    <span class="click-target" @click=${this.doPause}>PLAY/PAUSE</span>
-    <span>${this.currentPlayTrack?.metadata?.title} (${(this.playCursor?.index ?? -1) + 1} / ${this.currentPlayPlaylist?.entryPaths?.length ?? this.playCursor?.trackCount})</span>
-  </div>
-
-  <div>
-    <textarea id="search-query-textarea" @input=${this.queryChanged} @keypress=${this.queryKeypress}></textarea>
-    <span>
-    ${this.completions.map(c => html`
-      <span class="click-target" @click=${() => this.acceptQueryCompletion(c)}>
-        ${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}
-      </span>
-    `)}
-    </span>
-  </div>
-  <div>Database.instance.searchContextEpoch ${Database.instance.searchContextEpoch}</div>
-  <div>Database.instance.searchResultsStatus.status ${Database.instance.searchResultsStatus}</div>
-  <div>Database.instance.partialSearchResultsAvailable ${Database.instance.partialSearchResultsAvailable}</div>
-  <div class="click-target" @click=${this.requestUpdate}>REFRESH</div>
-  <recycler-view id="track-list-view"></recycler-view>
-
-  <div style="display: none;">
-  ${this.tracksInView.map(track => html`
-    <div>${track?.path}</div>
-  `)}
+<div class="outer">
+  <div class="track-view-area">
+    <recycler-view class="track-view" id="track-list-view"></recycler-view>
+    <div class=${classMap({
+            'query-container': true,
+            'hidden': !this.isQueryInputVisible(),
+        })}>
+      <div class=${classMap({
+            'query-input-underlay': true,
+            'hidden': !this.isQueryUnderlayVisible(),
+        })}
+          @click=${this.onQueryUnderlayClicked}>
+      </div>
+      <div class="query-input-overlay">
+        <div class="query-input-area" @keypress=${this.queryAreaKeypress} @keydown=${this.queryAreaKeydown}>
+          <input id="query-input" class="query-input" @input=${this.queryChanged} @keypress=${this.queryKeypress}></input>
+        </div>
+        <div class="query-completion-area">
+          ${this.completions.map(c => html`
+            <div class="query-completion-chip click-target" @click=${() => this.acceptQueryCompletion(c)}>
+              <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
+              <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
+            </div>
+          `)}
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="player">
+    <div class="player-divider">
+      <div class="player-top-shade"></div>
+    </div>
     <div class="player-artwork"></div>
     <div class="player-info">
       <div class="player-title">${this.currentPlayTrack?.metadata?.title}</div>
@@ -812,12 +1154,12 @@ export class NanoApp extends LitElement {
       <div class="player-album">${this.currentPlayTrack?.metadata?.album}</div>
     </div>
     <div class="player-controls">
-      <span class="click-target" @click=${this.doPreviousTrack}>|<|</span>
-      <span class="click-target" @click=${this.doPlay}>|></span>
-      <span class="click-target" @click=${this.doPause}>||</span>
-      <span class="click-target" @click=${this.doStop}>@</span>
-      <span class="click-target" @click=${this.doNextTrack}>|>|</span>
-      <span class="click-target" @click=${this.doNextTrack}>Q</span>
+      <span class="small-button click-target" @click=${this.doPreviousTrack}><div class="player-controls-button-text">[|&lt;]</div></span>
+      <span class="small-button click-target" @click=${this.doPlay}><div class="player-controls-button-text">[|&gt;]</div></span>
+      <span class="small-button click-target" @click=${this.doPause}><div class="player-controls-button-text">[II]</div></span>
+      <span class="small-button click-target" @click=${this.doStop}><div class="player-controls-button-text">[#]</div></span>
+      <span class="small-button click-target" @click=${this.doNextTrack}><div class="player-controls-button-text">[&gt;|]</div></span>
+      <span class="small-button click-target" @click=${() => {this.doToggleQueryInputField();}}><div class="player-controls-button-text">Q</div></span>
     </div>
     <div
         id="player-seekbar"
@@ -847,5 +1189,19 @@ export class NanoApp extends LitElement {
     };
     this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
     this.trackListView.ready();
+
+    if (this.requestFocusQueryInput) {
+      this.queryInputElement.focus();
+    }
   }
+}
+
+function getChipLabel(c: CandidateCompletion): string|undefined {
+  if (c.forCommand?.chipLabel) {
+    return c.forCommand?.chipLabel;
+  }
+  if (c.forCommand && c.resolvedArgs) {
+    return c.forCommand.chipLabelFunc?.(c.forCommand, c.resolvedArgs)
+  }
+  return undefined;
 }

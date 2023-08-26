@@ -3,6 +3,7 @@ import * as utils from './utils';
 export interface CommandSpec {
   name: string;
   desc: string;
+  chipLabel?: string;
   atomPrefix?: string;
   hasNegativeAtom?: boolean;
   enterAtomContext?: boolean;
@@ -10,6 +11,9 @@ export interface CommandSpec {
   executeOnAutoComplete?: boolean;
   argSpec: CommandArgSpec[];
   func: CommandFunc;
+  beginPreviewFunc?: CommandFunc;
+  cancelPreviewFunc?: CommandFunc;
+  chipLabelFunc?: CommandChipLabelFunc;
 }
 
 export interface CommandArgSpec {
@@ -22,6 +26,8 @@ export interface CommandArgSpec {
 }
 
 export interface CandidateCompletion {
+  isComplete: boolean;
+  resolvedArgs?: CommandResolvedArg[];
   byValue?: string;
   byCommand?: CommandSpec;
   forCommand?: CommandSpec;
@@ -30,6 +36,7 @@ export interface CandidateCompletion {
 }
 
 export type CommandFunc = (command: CommandSpec, args: CommandResolvedArg[]) => void;
+export type CommandChipLabelFunc = (command: CommandSpec, args: CommandResolvedArg[]) => string|undefined;
 
 export interface CommandResolvedArg {
   intValue?: number;
@@ -55,7 +62,7 @@ export class CommandParser {
     const [completions, executeFuncs] = this.parseQuery(fullQuery, false);
     if (addExecuteAsCompletion && executeFuncs) {
       for (const executeFunc of executeFuncs) {
-        completions.push(executeFunc[0]);
+        completions.push(executeFunc);
       }
     }
     return completions;
@@ -67,26 +74,30 @@ export class CommandParser {
       return false;
     }
     for (const executeFunc of executeFuncs) {
-      executeFunc[1]();
+      if (executeFunc.forCommand && executeFunc.resolvedArgs) {
+        executeFunc.forCommand.func(executeFunc.forCommand, executeFunc.resolvedArgs);
+      }
     }
     return true;
   }
 
-  private parseQuery(fullQuery: string, execute: boolean): [completions: CandidateCompletion[], executeFuncs: [CandidateCompletion, () => void][]] {
+  private parseQuery(fullQuery: string, execute: boolean): [completions: CandidateCompletion[], executeFuncs: CandidateCompletion[]] {
     const [rest, newHead, completions, resolvedArgs, forCommand] = this.parseArgs(fullQuery, '', undefined, [{subcommands: this.commands}]);
     console.log(`rest: ${rest} completions: [${completions.map(c => c.resultQuery ?? c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>').join('|')}]`);
 
-    const executeFuncs: [CandidateCompletion, () => void][] = [];
+    const executeFuncs: CandidateCompletion[] = [];
     if (resolvedArgs) {
       for (const resolvedArg of resolvedArgs) {
         const command = resolvedArg.subcommand;
         if (command) {
-          executeFuncs.push([{
+          executeFuncs.push({
+            isComplete: true,
+            resolvedArgs: command.args,
             byCommand: forCommand,
-            forCommand: forCommand,
+            forCommand: command.command,
             suffixFragment: '',
             resultQuery: fullQuery,
-          }, () => { command.command.func(command.command, command.args); }]);
+          });
         }
       }
     }
@@ -143,6 +154,7 @@ export class CommandParser {
                         makeFragments(newHead, !isColonAtom, subcommand.atomPrefix, rest.length);
                     candidateCompletionsSet.add(subcommand);
                     candidateCompletions.push({
+                        isComplete: false,
                         byCommand: subcommand,
                         suffixFragment: suffixFragment,
                         resultQuery: resultQuery,
@@ -201,6 +213,7 @@ export class CommandParser {
                 const [suffixFragment, resultQuery] =
                     makeFragments(newHead, true, oneof, rest.length);
                 candidateCompletions.push({
+                    isComplete: false,
                     byValue: oneof,
                     suffixFragment: suffixFragment,
                     resultQuery: resultQuery,
@@ -221,6 +234,7 @@ export class CommandParser {
               if (!candidateCompletionsSet.has('<int>')) {
                 candidateCompletionsSet.add('<int>');
                 candidateCompletions.push({
+                    isComplete: false,
                     byValue: '<int>',
                     forCommand: forCommand,
                 });
@@ -237,6 +251,7 @@ export class CommandParser {
             if (!candidateCompletionsSet.has('<string>')) {
               candidateCompletionsSet.add('<string>');
               candidateCompletions.push({
+                  isComplete: false,
                   byValue: '<string>',
                   forCommand: forCommand,
               });
@@ -305,6 +320,23 @@ export class CommandParser {
         resolvedArgs.push(resolved);
       }
       thisBoundFunc(...resolvedArgs);
+    };
+  }
+
+  public static bindChipLabelFunc(func: Function, thisValue: object, ...resolvers: CommandArgResolverFunc[]): CommandChipLabelFunc {
+    const thisBoundFunc = func.bind(thisValue);
+    return (command: CommandSpec, args: CommandResolvedArg[]) => {
+      if (resolvers.length > args.length) {
+        throw Error(`Expected ${resolvers.length} args but got ${args.length}.`);
+      }
+      const resolvedArgs: any[] = [];
+      for (let i = 0; i < resolvers.length; ++i) {
+        const resolver = resolvers[i];
+        const arg = args[i];
+        const resolved = resolver(arg);
+        resolvedArgs.push(resolved);
+      }
+      return thisBoundFunc(...resolvedArgs);
     };
   }
 }

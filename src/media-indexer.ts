@@ -63,10 +63,11 @@ export class MediaIndexer {
 
   private applyGeneratedMetadata(track: Track) {
     const sortKey = [
+      utils.filePathDirectory(Database.getPathFilePath(track.path)), // TODO: Reverse path parts
       track.metadata?.album,
       utils.formatIntPadded(track.metadata?.diskNumber ?? 0, 3),
       utils.formatIntPadded(track.metadata?.trackNumber ?? 0, 3),
-      Database.getPathFilePath(track.path), // TODO: Reverse path parts
+      track.metadata?.title,
     ].join('\x00');
     track.generatedMetadata = {
       librarySortKey: sortKey
@@ -93,6 +94,9 @@ export class MediaIndexer {
             }
             toUpdate.fileHandle = fileHandle;
             toUpdate.addedDate = Date.now();
+            toUpdate.metadata = {
+              title: utils.filePathFileNameWithoutExtension(fileHandle.name),
+            };
             this.applyGeneratedMetadata(toUpdate);
           }
         });
@@ -226,7 +230,7 @@ export class MediaIndexer {
         if (!tags.tags) {
           tags.tags = {};
         }
-        tags.tags.title ??= utils.filePathWithoutExtension(file.name);
+        tags.tags.title ??= utils.filePathFileNameWithoutExtension(file.name);
 
         const audioMetadataInfo = await this.readAudioMetadataInfo(file);
         const duration = audioMetadataInfo?.duration;
