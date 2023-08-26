@@ -49,7 +49,9 @@ export class MediaIndexer {
       return;
     }
     this.fileIndexerProc();
-    this.pathIndexerProc();
+    for (const i of utils.range(constants.FILE_INDEXER_PARALLEL_COUNT)) {
+      this.pathIndexerProc();
+    }
 
     this.audioElement.preload = 'metadata';
     this.audioElement.addEventListener('error', () => this.audioMetadataReadFailed());

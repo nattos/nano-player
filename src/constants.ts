@@ -10,3 +10,4 @@ export const UPDATE_DELAY_MILLIS = 200;
 export const PARTIAL_SUMMARY_LENGTH = 1024;
 export const LIST_VIEW_PEEK_LOOKAHEAD = 128;
 export const INDEXED_FILES_PATTERN = /^.*\.(mp3|flac|m4a|wav|aif[f]?|mov|mp[e]?g)$/;
+export const FILE_INDEXER_PARALLEL_COUNT = 8;

@@ -325,7 +325,7 @@ export class Database {
       return [];
     }
     const results: Track[] = [];
-    const readLength = max - min;
+    const readLength = max - min + 1;
     for (let i = 0; i < readLength; ++i) {
       results.push(cursor.value);
       if (!await cursor.advance(1)) {

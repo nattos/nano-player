@@ -298,6 +298,18 @@ export function* filterNulllike<TValue, TKey>(values: Iterable<TValue|undefined|
   }
 }
 
+export function* range(countOrMin: number, count?: number): Iterable<number> {
+  let min = 0;
+  let max = countOrMin;
+  if (count !== undefined) {
+    min = countOrMin;
+    max = min + count;
+  }
+  for (let i = min; i < max; ++i) {
+    yield i;
+  }
+}
+
 export function setAddRange<T>(set: Set<T>, values: Iterable<T>) {
   for (const value of values) {
     set.add(value);

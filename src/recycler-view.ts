@@ -108,7 +108,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + RecyclerView.elementsInViewPaddingCount));
 
     if (this.didReady) {
-      for (let i = spawnMinIndex; i < spawnMaxIndex; ++i) {
+      for (let i = spawnMinIndex; i < spawnMaxIndex + 1; ++i) {
         this.ensureElement(i);
       }
       const collectWaterlevel = spawnMaxIndex - spawnMinIndex + RecyclerView.elementCollectCountWaterlevel;
