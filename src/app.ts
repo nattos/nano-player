@@ -985,7 +985,7 @@ export class NanoApp extends LitElement {
       if (this.audioElement.src) {
         await this.waitAudioElementSettled();
         const toRevoke = this.audioElement.src;
-        this.audioElement.src = '';
+        this.audioElement.srcObject = null;
         URL.revokeObjectURL(toRevoke);
       }
       this.audioElement.src = URL.createObjectURL(file);
@@ -994,7 +994,7 @@ export class NanoApp extends LitElement {
     } catch (e) {
       console.error(e);
       try {
-        this.audioElement.src = '';
+        this.audioElement.srcObject = null;
       } catch (e) {
         console.error(e);
       }

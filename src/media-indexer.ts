@@ -354,7 +354,9 @@ export class MediaIndexer {
   private audioMetadataReadFailed() {
     this.audioMetadataReadResolvable?.reject(this.audioElement.error?.message);
     this.audioMetadataReadResolvable = undefined;
-    this.audioElement.src = '';
+    if (this.audioElement.srcObject) {
+      this.audioElement.srcObject = null;
+    }
   }
 
   private audioMetadataReadSucceeded() {
@@ -362,6 +364,8 @@ export class MediaIndexer {
       duration: this.audioElement.duration,
     });
     this.audioMetadataReadResolvable = undefined;
-    this.audioElement.src = '';
+    if (this.audioElement.srcObject) {
+      this.audioElement.srcObject = null;
+    }
   }
 }

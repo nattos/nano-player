@@ -32,6 +32,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   private readonly elementsDisplayedMap = new Map<number, TElement>();
   private readonly elementFreePool: TElement[] = [];
   private lastProgrammaticScrollTimestamp = 0;
+  private isOnScrollInFlight = false;
   private onUserScrolledDirty = false;
 
   constructor() {
@@ -108,27 +109,40 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   }
 
   @action
-  private onScroll(e: Event) {
-    this.updateViewport();
-    const timeSinceLastScrollCall = Date.now() - this.lastProgrammaticScrollTimestamp;
-    if (timeSinceLastScrollCall > constants.PROGRAMMATIC_SCROLL_DURATION && this.onUserScrolled) {
-      if (!this.onUserScrolledDirty) {
-        this.onUserScrolledDirty = true;
-        setTimeout(() => {
-          this.onUserScrolledDirty = false;
-          this.onUserScrolled?.();
-        }, this.userScrolledUpdateDelay);
-      }
+  private onScroll() {
+    if (this.isOnScrollInFlight) {
+      return;
     }
+    this.isOnScrollInFlight = true;
+    requestAnimationFrame(() => {
+      this.isOnScrollInFlight = false;
+      this.updateViewport();
+      const timeSinceLastScrollCall = Date.now() - this.lastProgrammaticScrollTimestamp;
+      if (timeSinceLastScrollCall > constants.PROGRAMMATIC_SCROLL_DURATION && this.onUserScrolled) {
+        if (!this.onUserScrolledDirty) {
+          this.onUserScrolledDirty = true;
+          setTimeout(() => {
+            this.onUserScrolledDirty = false;
+            this.onUserScrolled?.();
+          }, this.userScrolledUpdateDelay);
+        }
+      }
+    });
   }
 
-  private updateViewport() {
+  private updateViewport(force = false) {
     const scrollTop = this.scrollContainer!.scrollTop;
     const scrollBottom = scrollTop + this.scrollContainer!.clientHeight;
     const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
     const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
     const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - RecyclerView.elementsInViewPaddingCount));
     const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + RecyclerView.elementsInViewPaddingCount));
+
+    if (!force) {
+      if (this.viewportMinIndex === viewportMinIndex && this.viewportMaxIndex === viewportMaxIndex) {
+        return;
+      }
+    }
 
     if (this.didReady) {
       for (let i = spawnMinIndex; i < spawnMaxIndex + 1; ++i) {
@@ -168,7 +182,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   protected updated(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
     super.updated(changedProperties);
     this.ready();
-    this.updateViewport();
+    this.updateViewport(true);
   }
 }
 
