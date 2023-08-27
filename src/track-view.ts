@@ -38,6 +38,8 @@ export class TrackView extends LitElement {
 .row.even {
   background-color: var(--theme-row-even-bg);
 }
+.row.playing {
+}
 .row.highlighted {
   border-color: var(--theme-hi-border);
 }
@@ -106,6 +108,7 @@ export class TrackView extends LitElement {
   @property() track?: Track;
   @property() selected = false;
   @property() highlighted = false;
+  @property() playing = false;
   host?: TrackViewHost;
 
   private extendedMetadata: ExtendedMetadata = {};
@@ -153,12 +156,13 @@ export class TrackView extends LitElement {
     class=${classMap({
       'row': true,
       'even': (this.index % 2) === 0,
+      'playing': this.playing,
       'selected': this.selected,
       'highlighted': this.highlighted,
     })}
     @mousedown=${this.clicked}
     @dblclick=${this.dblclick}>
-  <div class="col-index">${this.index}</div>
+  <div class="col-index">${this.playing ? '_' : ''}${this.index}</div>
   <div class="col-title">${this.track?.metadata?.title}</div>
   <div class="col-duration">${utils.formatDuration(this.track?.metadata?.duration)}</div>
   <div class="col-artist">${this.track?.metadata?.artist}</div>

@@ -1,5 +1,5 @@
 import { IDBPDatabase, IDBPObjectStore, IDBPTransaction, deleteDB, openDB } from "idb";
-import { observable, makeObservable, action } from "mobx";
+import { observable, makeObservable, action, runInAction } from "mobx";
 import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry } from "./schema";
 import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
 import * as utils from './utils';
@@ -67,6 +67,11 @@ export enum UpdateMode {
   UpdateOnly = 'update_only',
 }
 
+enum UpdateStatus {
+  Inserted,
+  Updated,
+}
+
 const ALL_QUERY_TOKEN_CONTEXTS: QueryTokenContext[] = utils.getEnumValues(QueryTokenContext);
 const ALL_SORT_CONTEXTS: SortContext[] = utils.getEnumValues(SortContext);
 const SORT_CONTEXTS_TO_METADATA_PATH = new Map<SortContext, string[]>([
@@ -114,6 +119,9 @@ export class Database {
   @observable partialSearchResultsSummary: Track[] = [];
   @observable searchContextEpoch = 0;
   @observable listChangeEpoch = 0;
+  @observable trackDataChangeEpoch = 0;
+
+  readonly onTrackPathsUpdated = utils.multicast<(paths: string[]) => void>();
 
   constructor() {
     makeObservable(this);
@@ -414,11 +422,22 @@ export class Database {
       const db = await this.database;
       const tx = db.transaction(this.updateTrackTables, 'readwrite');
 
+      let insertCount = 0;
       const updatedPaths: string[] = [];
       let aborted = true;
       try {
         const allTrackKeyValues = await Promise.all(trackPaths.map<Promise<[string, Track|undefined]>>(
-            async path => [path, await this.fetchTrackForUpdate(path, mode, tx)]));
+            async path => {
+              const result = await this.fetchTrackForUpdate(path, mode, tx);
+              if (!result) {
+                return [path, undefined];
+              }
+              const [track, status] = result;
+              if (status === UpdateStatus.Inserted) {
+                insertCount++;
+              }
+              return [path, track];
+            }));
         const updatableTracksMap = new Map<string, Track|undefined>(allTrackKeyValues);
         const touchedTrackPaths = new Set<string>();
         await updaterFunc((path) => {
@@ -457,15 +476,25 @@ export class Database {
         if (!aborted) {
           tx.commit();
           await tx.done;
-          this.listChangeEpoch++;
+          runInAction(() => {
+            if (insertCount > 0 && updatedPaths.length > 0) {
+              this.listChangeEpoch++;
+            }
+            if (updatedPaths.length > 0) {
+              this.trackDataChangeEpoch++;
+            }
+          });
         }
       }
       console.log(`Updated tracks in database: ${updatedPaths}`);
+      if (updatedPaths.length > 0) {
+        this.onTrackPathsUpdated(updatedPaths);
+      }
       return updatedPaths;
     });
   }
 
-  private async fetchTrackForUpdate(path: string, mode: UpdateMode, tx: IDBPTransaction<unknown, string[], "readwrite">): Promise<Track|undefined> {
+  private async fetchTrackForUpdate(path: string, mode: UpdateMode, tx: IDBPTransaction<unknown, string[], "readwrite">): Promise<[Track, UpdateStatus]|undefined> {
     if (!path) {
       return undefined;
     }
@@ -489,15 +518,15 @@ export class Database {
         break;
     }
     if (!oldTrack) {
-      return {
+      return [{
         path: path,
         addedDate: Date.now(),
         indexedDate: 0,
         indexedAtLastModifiedDate: 0,
         inPlaylists: [],
-      };
+      }, UpdateStatus.Inserted];
     }
-    return oldTrack;
+    return [oldTrack, UpdateStatus.Updated];
   }
 
   private putTrack(track: Track, tx: IDBPTransaction<unknown, string[], "readwrite">) {

@@ -137,6 +137,10 @@ export class LruCache<TKey, TValue> {
 
   constructor(public readonly maxEntries: number) {}
 
+  entries() {
+    return this.values.entries();
+  }
+
   get(key: TKey): TValue|undefined {
     const entry = this.values.get(key);
     if (entry === undefined) {
@@ -265,6 +269,40 @@ export function filePathExtension(path: string): string {
   return fileName.slice(splitIndex + 1);
 }
 
+export async function getSubpathDirectory(directory: FileSystemDirectoryHandle, subpath: string): Promise<FileSystemDirectoryHandle|undefined> {
+  let found: FileSystemDirectoryHandle = directory;
+  for (const toFind of subpath.split('/')) {
+    if (toFind === '.' || toFind === '') {
+      continue;
+    }
+    const child = await found.getDirectoryHandle(toFind);
+    if (child === undefined) {
+      return undefined;
+    }
+    found = child;
+  }
+  return found;
+}
+
+export async function getSubpathFile(directory: FileSystemDirectoryHandle, subpath: string): Promise<FileSystemFileHandle|undefined> {
+  const pathToDirectory = filePathDirectory(subpath);
+  const fileName = filePathFileName(subpath);
+  const containingDirectory = await getSubpathDirectory(directory, pathToDirectory);
+  if (!containingDirectory) {
+    return undefined;
+  }
+  try {
+    return await containingDirectory.getFileHandle(fileName);
+  } catch (e) {
+    if (e instanceof DOMException) {
+      if (e.name === 'NotFoundError') {
+        return undefined;
+      }
+    }
+    throw e;
+  }
+}
+
 export function* mapAll<TIn, TOut>(values: Iterable<TIn>, callback: (value: TIn) => Iterable<TOut>|undefined) {
   for (const value of values) {
     const valueResult = callback(value);
@@ -316,6 +354,14 @@ export function setAddRange<T>(set: Set<T>, values: Iterable<T>) {
   }
 }
 
+export async function arrayFromAsync<T>(asyncIterator: AsyncIterable<T>) {
+  const result: T[] = [];
+  for await (const value of asyncIterator) {
+    result.push(value);
+  }
+  return result;
+}
+
 export function upcast<T>(value: T) {
   return value;
 }
@@ -330,4 +376,34 @@ export function merge<T1 extends object, T2 extends object>(onto: T1, from: T2):
   }
   Object.keys(from).forEach(key => (onto as any)[key] = (from as any)[key]);
   return onto as T1 & T2;
+}
+
+// TODO: Lazy! Hacky! Switch to Node's isDeepStrictEqual.
+export function isDeepStrictEqual(object1: any, object2: any) {
+  const keys1 = Object.keys(object1);
+  const keys2 = Object.keys(object2);
+
+  if (keys1.length !== keys2.length) {
+    return false;
+  }
+
+  for (const key of keys1) {
+    const val1 = object1[key];
+    const val2 = object2[key];
+    const areObjects = isObject(val1) && isObject(val2);
+    if (areObjects) {
+      if (!isDeepStrictEqual(val1, val2)) {
+        return false;
+      }
+    } else {
+      if (val1 !== val2) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function isObject(object: any) {
+  return object != null && typeof object === 'object';
 }

@@ -30,10 +30,12 @@ export class TrackCursor {
   private sourceField: ListSource;
 
   private databaseDirty = true;
+  private tracksDirty = false;
   private currentIndex = 0;
   private cachedTrackCount = 0;
 
   private readonly cachedBlocks = new utils.LruCache<number, Track[]>(TrackCursor.cachedBlockCount);
+  private readonly invalidatedBlocks = new Map<number, Track[]>();
   private readonly fetchesInFlight = new Map<number, Promise<Track[]>>();
 
   private cachedPrimarySource: ListPrimarySource;
@@ -41,6 +43,8 @@ export class TrackCursor {
   private cachedSortContext?: SortContext;
   private cachedSearchContextEpoch: number;
   private cachedListChangeEpoch: number;
+
+  readonly onCachedTrackInvalidated = utils.multicast();
 
   constructor(
       public readonly database: Database,
@@ -60,9 +64,12 @@ export class TrackCursor {
     this.cachedSortContext = resolvedSource.sortContext;
     this.cachedSearchContextEpoch = this.database.searchContextEpoch;
     this.cachedListChangeEpoch = this.database.listChangeEpoch;
+    this.database.onTrackPathsUpdated.add(this.boundOnDatabaseTrackPathsUpdated);
   }
 
-  dispose() {}
+  dispose() {
+    this.database.onTrackPathsUpdated.remove(this.boundOnDatabaseTrackPathsUpdated);
+  }
 
   get source() { return this.sourceField; }
   set source(source: ListSource) {
@@ -96,6 +103,23 @@ export class TrackCursor {
     }
   }
 
+  private boundOnDatabaseTrackPathsUpdated = this.onDatabaseTrackPathsUpdated.bind(this);
+  private onDatabaseTrackPathsUpdated(paths: string[]) {
+    if (this.tracksDirty) {
+      return;
+    }
+    const pathsSet = new Set<string>(paths);
+    for (const [key, block] of this.cachedBlocks.entries()) {
+      for (const track of block) {
+        if (pathsSet.has(track.path)) {
+          this.tracksDirty = true;
+          this.onCachedTrackInvalidated();
+          return;
+        }
+      }
+    }
+  }
+
   get index() {
     return this.currentIndex;
   }
@@ -118,7 +142,9 @@ export class TrackCursor {
     this.checkDatabaseDirty();
     const source = NanoApp.instance!.resolveSource(this.sourceField);
 
-    const databaseDirty = this.databaseDirty;
+    const contextDirty = this.databaseDirty;
+    const databaseDirty = this.databaseDirty || this.tracksDirty;
+    this.tracksDirty = false;
     this.databaseDirty = false;
 
     let reanchorFromPos = this.currentIndex;
@@ -133,6 +159,7 @@ export class TrackCursor {
     }
 
     const missingBlocks: number[] = [];
+    const invalidatedBlocks: number[] = [];
     const regionBlocks: Array<Track[]|undefined> = [];
     let dirtyResults: TrackUpdatedResults;
     {
@@ -142,9 +169,10 @@ export class TrackCursor {
       const endBlock = TrackCursor.indexToBlock(endIndex);
 
       for (let blockNumber = startBlock; blockNumber <= endBlock; ++blockNumber) {
-        const cachedBlock = this.cachedBlocks.get(blockNumber);
+        let cachedBlock = this.cachedBlocks.get(blockNumber);
         if (cachedBlock === undefined) {
           missingBlocks.push(blockNumber);
+          cachedBlock = this.invalidatedBlocks.get(blockNumber);
         }
         regionBlocks.push(cachedBlock);
       }
@@ -159,7 +187,12 @@ export class TrackCursor {
 
 
       if (databaseDirty) {
-        // TODO: Handle this.databaseDirty better.
+        // Move all cachedBlocks to invalidated. They can still be pulled, but
+        // they will get cleared after the first fetch.
+        for (const [key, value] of this.cachedBlocks.entries()) {
+          this.invalidatedBlocks.set(key, value);
+          invalidatedBlocks.push(key);
+        }
         this.cachedBlocks.clear();
       }
     }
@@ -196,7 +229,6 @@ export class TrackCursor {
       let updatedBlocks = Array.from(regionBlocks);
       let rebasedDelta: number|undefined = undefined;
       if (databaseDirty) {
-        // TODO: Handle this.databaseDirty better.
         updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
 
         const useOldAnchor = Number.isFinite(reanchorFromPos);
@@ -247,6 +279,10 @@ export class TrackCursor {
       await Promise.all(fetchPromises);
       const generator = this.tracksFromRegionBlocksGenerator(updatedBlocks, startBlock, startIndex, endIndex);
 
+      for (const key of invalidatedBlocks) {
+        this.invalidatedBlocks.delete(key);
+      }
+
       return utils.upcast<TrackUpdatedResults>({
         rebasedStartIndex: startIndex,
         rebasedEndIndex: endIndex,
@@ -257,7 +293,7 @@ export class TrackCursor {
     });
 
     return {
-      contextChanged: databaseDirty,
+      contextChanged: contextDirty,
       dirtyResults: dirtyResults,
       updatedResultsPromise: updateBlocksPromise,
     };

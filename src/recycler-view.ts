@@ -3,6 +3,8 @@ import {} from 'lit/html';
 import {customElement, property, query} from 'lit/decorators.js';
 import {styleMap} from 'lit-html/directives/style-map.js';
 import {action, observable, makeObservable} from 'mobx';
+import * as utils from './utils';
+import * as constants from './constants';
 
 export function init() {}
 
@@ -20,12 +22,17 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   elementDataSetter?: (element: TElement, index: number, data: TData|undefined) => void;
   dataGetter?: (index: number) => TData|undefined;
 
+  onUserScrolled?: () => void;
+  userScrolledUpdateDelay = 100;
+
   @observable viewportMinIndex = 0;
   @observable viewportMaxIndex = 0;
 
   private didReady = false;
-  private elementsDisplayedMap = new Map<number, TElement>();
-  private elementFreePool: TElement[] = [];
+  private readonly elementsDisplayedMap = new Map<number, TElement>();
+  private readonly elementFreePool: TElement[] = [];
+  private lastProgrammaticScrollTimestamp = 0;
+  private onUserScrolledDirty = false;
 
   constructor() {
     super();
@@ -44,10 +51,16 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   }
 
   ensureVisible(center: number, padding: number) {
+    let didScroll = false;
     if (this.viewportMinIndex > center) {
       this.scrollContainer.scrollTo({top: (center - padding) * this.rowHeight});
+      didScroll = true;
     } else if (this.viewportMaxIndex <= center) {
       this.scrollContainer.scrollTo({top: (center + padding) * this.rowHeight - this.scrollContainer.clientHeight});
+      didScroll = true;
+    }
+    if (didScroll) {
+      this.lastProgrammaticScrollTimestamp = Date.now();
     }
   }
 
@@ -95,8 +108,18 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   }
 
   @action
-  private onScroll() {
+  private onScroll(e: Event) {
     this.updateViewport();
+    const timeSinceLastScrollCall = Date.now() - this.lastProgrammaticScrollTimestamp;
+    if (timeSinceLastScrollCall > constants.PROGRAMMATIC_SCROLL_DURATION && this.onUserScrolled) {
+      if (!this.onUserScrolledDirty) {
+        this.onUserScrolledDirty = true;
+        setTimeout(() => {
+          this.onUserScrolledDirty = false;
+          this.onUserScrolled?.();
+        }, this.userScrolledUpdateDelay);
+      }
+    }
   }
 
   private updateViewport() {

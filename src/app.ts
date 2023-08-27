@@ -1,9 +1,9 @@
-import { html, css, LitElement, PropertyValueMap, render } from 'lit';
+import { html, css, LitElement, PropertyValueMap } from 'lit';
 import {} from 'lit/html';
-import { customElement, query } from 'lit/decorators.js';
+import { customElement, query, property } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
-import { action, autorun, runInAction, observable, observe, makeObservable, override } from 'mobx';
+import { action, autorun, runInAction, observable, observe, makeObservable } from 'mobx';
 import { RecyclerView } from './recycler-view';
 import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
 import * as utils from './utils';
@@ -14,11 +14,16 @@ import { LIST_VIEW_PEEK_LOOKAHEAD } from './constants';
 import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
-import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSettingsGroupCommands, CmdSortTypes, getCommands } from './app-commands';
+import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
 import { Playlist, PlaylistManager } from './playlist-manager';
 import { Selection, SelectionMode } from './selection';
+import { ImageCache } from './ImageCache';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
+
+enum Overlay {
+  AlbumArt = 'album-art',
+}
 
 @customElement('nano-app')
 export class NanoApp extends LitElement {
@@ -27,6 +32,8 @@ export class NanoApp extends LitElement {
   @query('#query-input') queryInputElement!: HTMLInputElement;
   @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
+  @property() overlay?: Overlay;
+  private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
   private readonly trackViewHost: TrackViewHost;
   readonly commandParser = new CommandParser(getCommands(this));
@@ -39,6 +46,8 @@ export class NanoApp extends LitElement {
 
     this.audioElement.addEventListener('ended', this.onAudioEnded.bind(this));
     this.audioElement.addEventListener('error', this.onAudioError.bind(this));
+    this.audioElement.addEventListener('loadstart', this.onAudioLoadStart.bind(this));
+    this.audioElement.addEventListener('loadeddata', this.onAudioLoaded.bind(this));
     this.audioElement.addEventListener('timeupdate', this.onAudioTimeUpdate.bind(this));
 
     this.trackViewHost = {
@@ -71,6 +80,15 @@ export class NanoApp extends LitElement {
       observe(this.trackListView, 'viewportMinIndex', updateTracks);
       observe(this.trackListView, 'viewportMaxIndex', updateTracks);
       updateTracks();
+
+      Database.instance.onTrackPathsUpdated.add((paths) => {
+        setTimeout(async () => {
+          const playingPath = this.currentPlayTrack?.path;
+          if (playingPath && paths.includes(playingPath)) {
+            this.reloadPlayingTrack();
+          }
+        });
+      });
 
       autorun(() => { this.loadTrack(this.currentPlayTrack); });
       autorun(() => { this.setLoadedTrackPlaying(this.isPlaying); });
@@ -377,11 +395,19 @@ export class NanoApp extends LitElement {
   @observable isPlaying = false;
   @observable currentPlayProgress = 0;
   @observable currentPlayProgressFraction = 0;
-  @observable currentPlayTrack: Track|null = null;
-  @observable currentPlayPlaylist: Playlist|null = null;
+  @observable.shallow currentPlayTrack: Track|null = null;
+  @observable.shallow currentPlayPlaylist: Playlist|null = null;
+  @observable currentPlayImageUrl: string|null = null;
+  private currentPlayMoveEpoch = 0;
+  private currentPlayImageUrlEpoch = 0;
   private playLastDelta = 1;
   private playCursor?: TrackCursor;
-  private playOpQueue = new utils.OperationQueue();
+  private readonly playOpQueue = new utils.OperationQueue();
+  private loadedTrackPath?: string = undefined;
+  private loadedTrackMoveEpoch = 0;
+  private readonly loadTrackQueue = new utils.OperationQueue();
+  private isAudioPlayerLoading = false;
+  private readonly audioPlayerStatusChanged = new utils.WaitableFlag();
 
   @action
   doPlaySelected() {
@@ -412,12 +438,23 @@ export class NanoApp extends LitElement {
     }
   }
 
+  private updateAnchorForTrackView() {
+    const orderedTrackViews = this.trackListView.elementsInView.sort((a, b) => a.index - b.index);
+    const index = Math.floor(orderedTrackViews.length / 2) || 0;
+    const trackView = orderedTrackViews.at(index);
+    if (trackView && trackView.track) {
+      this.trackViewCursor?.setAnchor?.({ index: trackView.index, path: trackView.track.path });
+    }
+  }
+
   private updateSelectionInTrackView() {
     const [primaryIndex, primaryTrack] = this.selection.primary;
+    const playIndex = this.playCursor?.anchor?.index;
     for (const trackView of this.trackListView.elementsInView) {
       const index = trackView.index;
       trackView.selected = this.selection.has(index);
       trackView.highlighted = index === primaryIndex;
+      trackView.playing = index === playIndex;
     }
   }
 
@@ -480,12 +517,55 @@ export class NanoApp extends LitElement {
       console.log(`currentPlayTrack: ${foundTrack?.path}`);
       this.currentPlayTrack = foundTrack ?? null;
       this.currentPlayPlaylist = fromPlaylist ?? null;
+      this.currentPlayMoveEpoch++;
       if (foundTrack) {
         this.selection.select(nextIndex, foundTrack, SelectionMode.SetPrimary);
         this.trackListView.ensureVisible(nextIndex, constants.ENSURE_VISIBLE_PADDING);
       }
       this.cancelAudioSeek();
     });
+
+    this.loadPlayingTrackImage();
+  }
+
+  private async reloadPlayingTrack() {
+    await this.reanchorPlayCursor();
+    this.loadPlayingTrackImage();
+  }
+
+  private loadPlayingTrackImage() {
+    const foundTrack = this.currentPlayTrack;
+
+    let didLoadImage = false;
+    const loadImageUrlEpoch = ++this.currentPlayImageUrlEpoch;
+    setTimeout(() => {
+      if (this.currentPlayImageUrlEpoch === loadImageUrlEpoch && !didLoadImage) {
+        this.currentPlayImageUrl = null;
+      }
+    });
+    if (foundTrack && foundTrack.coverArt) {
+      const loadArtOp = (async () => {
+        const url = await ImageCache.instance.getImageUrl(foundTrack.coverArt!);
+        if (this.currentPlayImageUrlEpoch === loadImageUrlEpoch) {
+          this.currentPlayImageUrl = url ?? null;
+          didLoadImage = true;
+        }
+      })();
+    }
+  }
+
+  private async reanchorPlayCursor() {
+    const updatedResults = await this.playCursor?.peekRegion(0, 0)?.updatedResultsPromise;
+    if (updatedResults) {
+      if (updatedResults.rebasedDelta !== undefined) {
+        this.updateTrackDataInViewport();
+      }
+      const tracks = Array.from(updatedResults.results);
+      const track = tracks.at(0);
+      if (track && track.path === this.currentPlayTrack?.path) {
+        this.currentPlayTrack = track;
+      }
+    }
   }
 
   private setPlayState(isPlaying: boolean) {
@@ -538,6 +618,7 @@ export class NanoApp extends LitElement {
   doPreviousTrack() {
     this.playOpQueue.push(async () => {
       await this.movePlayCursor(-1);
+      this.setPlayState(true);
     });
   }
 
@@ -545,7 +626,19 @@ export class NanoApp extends LitElement {
   doNextTrack() {
     this.playOpQueue.push(async () => {
       await this.movePlayCursor(1);
+      this.setPlayState(true);
     });
+  }
+
+  @action
+  doFocusPlayingTrack() {
+    const anchor = this.playCursor?.anchor;
+    if (anchor === undefined || !this.currentPlayTrack) {
+      return;
+    }
+    this.selection.select(anchor.index, this.currentPlayTrack, SelectionMode.SetPrimary);
+    this.trackListView.ensureVisible(anchor.index, constants.ENSURE_VISIBLE_PADDING);
+    this.trackViewCursor?.setAnchor?.({ index: anchor.index, path: anchor.path });
   }
 
   @action
@@ -715,6 +808,16 @@ export class NanoApp extends LitElement {
     console.log(strs.join('\n'));
   }
 
+  @action
+  closeOverlay() {
+    this.overlay = undefined;
+  }
+
+  @action
+  showAlbumArtOverlay() {
+    this.overlay = Overlay.AlbumArt;
+  }
+
   private async resolvePlaylistArg(playlistArgStr: string): Promise<Playlist|undefined> {
     const playlists = Database.instance.getPlaylists();
     let entry =
@@ -735,7 +838,7 @@ export class NanoApp extends LitElement {
   private trackViewPlaylist?: string;
   private trackViewSortContext = SortContext.Index;
   private trackViewCursor?: TrackCursor;
-  @observable tracksInView: Array<Track|undefined> = [];
+  @observable.shallow tracksInView: Array<Track|undefined> = [];
   tracksInViewBaseIndex = 0;
 
   @observable completions: CandidateCompletion[] = [];
@@ -744,6 +847,12 @@ export class NanoApp extends LitElement {
   private updateTrackDataInViewport() {
     if (!this.trackViewCursor) {
       this.trackViewCursor = Database.instance.cursor(ListPrimarySource.Auto, undefined, undefined);
+      this.trackViewCursor.onCachedTrackInvalidated.add(() => {
+        setTimeout(async () => {
+          await this.reanchorPlayCursor();
+          this.updateTrackDataInViewport();
+        });
+      });
     }
 
     const blockSize = LIST_VIEW_PEEK_LOOKAHEAD;
@@ -787,6 +896,7 @@ export class NanoApp extends LitElement {
     }
     if (results.contextChanged) {
       this.selection.clear();
+      this.reanchorPlayCursor();
     }
   }
 
@@ -829,11 +939,18 @@ export class NanoApp extends LitElement {
     return this.renderAutorunResult;
   }
 
-  @action
   private async loadTrack(track: Track|undefined|null) {
-    if (!track || !track.fileHandle) {
+    this.loadTrackQueue.push(() => this.loadTrackInner(track));
+  }
+
+  @action
+  private async loadTrackInner(track: Track|undefined|null) {
+    if (!track || !track.fileHandle || (track.path === this.loadedTrackPath && this.currentPlayMoveEpoch === this.loadedTrackMoveEpoch)) {
       return;
     }
+    this.loadedTrackPath = track.path;
+    this.loadedTrackMoveEpoch = this.currentPlayMoveEpoch;
+
     const sourceKey = Database.getPathSourceKey(track.path);
     const libraryPath = Database.instance.findLibraryPath(sourceKey);
     if (!libraryPath) {
@@ -847,11 +964,22 @@ export class NanoApp extends LitElement {
     }
     try {
       const file = await track.fileHandle.getFile();
+      if (this.audioElement.src) {
+        await this.waitAudioElementSettled();
+        const toRevoke = this.audioElement.src;
+        this.audioElement.src = '';
+        URL.revokeObjectURL(toRevoke);
+      }
       this.audioElement.src = URL.createObjectURL(file);
       this.setLoadedTrackPlaying(this.isPlaying);
+      MediaIndexer.instance.updateMetadataForPath(track.path);
     } catch (e) {
       console.error(e);
-      this.audioElement.src = '';
+      try {
+        this.audioElement.src = '';
+      } catch (e) {
+        console.error(e);
+      }
     }
   }
 
@@ -871,8 +999,26 @@ export class NanoApp extends LitElement {
     this.doNextTrack();
   }
 
+  private onAudioLoadStart() {
+    this.isAudioPlayerLoading = true;
+    this.audioPlayerStatusChanged.set();
+  }
+
+  private onAudioLoaded() {
+    this.isAudioPlayerLoading = false;
+    this.audioPlayerStatusChanged.set();
+  }
+
   private onAudioError() {
+    this.isAudioPlayerLoading = false;
+    this.audioPlayerStatusChanged.set();
     this.movePlayCursor(this.playLastDelta);
+  }
+
+  private async waitAudioElementSettled() {
+    while (this.isAudioPlayerLoading) {
+      await this.audioPlayerStatusChanged.wait();
+    }
   }
 
   private onAudioTimeUpdate() {
@@ -947,6 +1093,7 @@ export class NanoApp extends LitElement {
 
 .click-target {
   user-select: none;
+  cursor: pointer;
 }
 
 .outer {
@@ -998,10 +1145,42 @@ export class NanoApp extends LitElement {
   pointer-events: none;
 }
 .player-artwork {
+  position: relative;
   height: var(--player-height);
   width: var(--player-height);
   background-color: var(--theme-bg3);
   grid-area: 1 / 1 / span 2 / span 1;
+  background-position: center;
+  background-size: cover;
+}
+.player-artwork-expand-overlay {
+  position: absolute;
+  bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  opacity: 0;
+}
+.player-artwork-expand-overlay:hover {
+  opacity: 1;
+}
+.player-artwork-expand-button {
+  position: absolute;
+  bottom: 0.2em;
+  right: 0.2em;
+  height: 1em;
+  width: 1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border-width: 1px;
+  border-color: var(--theme-fg);
+  border-style: solid;
+  opacity: 0.5;
+}
+.player-artwork-expand-button:hover {
+  opacity: 1.0;
 }
 .player-info {
   display: flex;
@@ -1145,6 +1324,46 @@ input {
   font-weight: 400;
 }
 
+
+.overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.overlay-underlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--theme-bg4);
+  opacity: 0.5;
+  user-select: none;
+  pointer-events: auto;
+}
+.overlay-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.overlay-album-art-content {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: 70%;
+  min-width: 30%;
+  min-height: 30%;
+  object-fit: contain;
+  background-color: var(--theme-bg4);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
   `;
 
   renderInner() {
@@ -1152,37 +1371,26 @@ input {
 <div class="outer">
   <div class="track-view-area">
     <recycler-view class="track-view" id="track-list-view"></recycler-view>
-    <div class=${classMap({
-            'query-container': true,
-            'hidden': !this.isQueryInputVisible(),
-        })}>
-      <div class=${classMap({
-            'query-input-underlay': true,
-            'hidden': !this.isQueryUnderlayVisible(),
-        })}
-          @click=${this.onQueryUnderlayClicked}>
-      </div>
-      <div class="query-input-overlay">
-        <div class="query-input-area" @keypress=${this.queryAreaKeypress} @keydown=${this.queryAreaKeydown}>
-          <input id="query-input" class="query-input" @input=${this.queryChanged} @keypress=${this.queryKeypress}></input>
-        </div>
-        <div class="query-completion-area">
-          ${this.completions.map(c => html`
-            <div class="query-completion-chip click-target" @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
-              <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
-              <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
-            </div>
-          `)}
-        </div>
-      </div>
-    </div>
+    ${this.renderQueryOverlay()}
+    ${this.renderOverlay()}
   </div>
 
   <div class="player">
     <div class="player-divider">
       <div class="player-top-shade"></div>
     </div>
-    <div class="player-artwork"></div>
+    <div
+        class="player-artwork click-target"
+        style=${styleMap({
+          'background-image': `url(${this.currentPlayImageUrl})`,
+        })}
+        @click=${this.doFocusPlayingTrack}>
+      <div class="player-artwork-expand-overlay">
+        <div class="player-artwork-expand-button click-target" @click=${this.showAlbumArtOverlay}>
+          <div>ℹ︎</div>
+        </div>
+      </div>
+    </div>
     <div class="player-info">
       <div class="player-title">${this.currentPlayTrack?.metadata?.title}</div>
       <div class="player-artist">${this.currentPlayTrack?.metadata?.artist}</div>
@@ -1209,21 +1417,79 @@ input {
 `;
   }
 
+  private renderOverlay() {
+    if (this.overlay === Overlay.AlbumArt) {
+      return html`
+<div class="overlay-container">
+  <div class="overlay-underlay" @click=${this.closeOverlay}></div>
+  <div class="overlay-content">
+    <img
+        class="overlay-album-art-content"
+        alt=""
+        src=${this.currentPlayImageUrl}>
+    </img>
+    </div>
+  </div>
+</div>
+`;
+    }
+  }
+
+  private renderQueryOverlay() {
+    return html`
+<div class=${classMap({
+        'query-container': true,
+        'hidden': !this.isQueryInputVisible() || this.overlay !== undefined,
+    })}>
+  <div class=${classMap({
+        'query-input-underlay': true,
+        'hidden': !this.isQueryUnderlayVisible(),
+    })}
+      @click=${this.onQueryUnderlayClicked}>
+  </div>
+  <div class="query-input-overlay">
+    <div class="query-input-area" @keypress=${this.queryAreaKeypress} @keydown=${this.queryAreaKeydown}>
+      <input id="query-input" class="query-input" @input=${this.queryChanged} @keypress=${this.queryKeypress}></input>
+    </div>
+    <div class="query-completion-area">
+      ${this.completions.map(c => html`
+        <div class="query-completion-chip click-target" @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
+          <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
+          <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
+        </div>
+      `)}
+    </div>
+  </div>
+</div>
+    `;
+  }
+
   protected updated(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
     super.updated(changedProperties);
 
-    this.trackListView!.elementConstructor = () => new TrackView();
-    this.trackListView!.elementDataSetter = (trackView, index, track) => {
-      trackView.index = index;
-      trackView.track = track;
-      trackView.host = this.trackViewHost;
+    if (!this.didReadyTrackListView) {
+      this.didReadyTrackListView = true;
 
-      const [primaryIndex, primaryTrack] = this.selection.primary;
-      trackView.selected = this.selection.has(index);
-      trackView.highlighted = index === primaryIndex;
-    };
-    this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
-    this.trackListView.ready();
+      this.trackListView.onUserScrolled = () => {
+        this.updateAnchorForTrackView();
+      };
+
+      this.trackListView!.elementConstructor = () => new TrackView();
+      this.trackListView!.elementDataSetter = (trackView, index, track) => {
+        const playIndex = this.playCursor?.anchor?.index;
+    
+        trackView.index = index;
+        trackView.track = track;
+        trackView.host = this.trackViewHost;
+
+        const [primaryIndex, primaryTrack] = this.selection.primary;
+        trackView.selected = this.selection.has(index);
+        trackView.highlighted = index === primaryIndex;
+        trackView.playing = index === playIndex;
+      };
+      this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
+      this.trackListView.ready();
+    }
 
     if (this.requestFocusQueryInput) {
       this.queryInputElement.focus();

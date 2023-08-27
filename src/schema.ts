@@ -8,6 +8,7 @@ export interface Track {
   indexedDate: number;
   indexedAtLastModifiedDate: number;
   inPlaylists: string[];
+  coverArt?: ArtworkRef;
 }
 
 export interface TrackMetadata {
@@ -29,6 +30,11 @@ export interface GeneratedTrackMetadata {
 
 export interface ArtSummary {
   color: string;
+}
+
+export interface ArtworkRef {
+  fromImageFileAtPath?: string;
+  fromImageInFileMetadataAtPath?: string;
 }
 
 export interface TrackPrefix {
