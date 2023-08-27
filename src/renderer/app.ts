@@ -10,8 +10,8 @@ import * as utils from './utils';
 import * as constants from './constants';
 import { TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
+import { TrackInsertMarkerView } from './track-insert-marker-view';
 import { Track } from './schema';
-import { LIST_VIEW_PEEK_LOOKAHEAD } from './constants';
 import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
@@ -36,6 +36,8 @@ export class NanoApp extends LitElement {
   @property() overlay?: Overlay;
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
+  private previewMoveDelta = 0;
+  @observable private previewMoveInsertPos: number|null = null;
   private readonly trackViewHost: TrackViewHost;
   private readonly trackGroupViewHost: TrackGroupViewHost;
   readonly commandParser = new CommandParser(getCommands(this));
@@ -57,6 +59,9 @@ export class NanoApp extends LitElement {
         thisCapture.doPlayTrack(trackView.index, trackView.track);
       },
       doSelectTrackView: this.doSelectTrackView.bind(this),
+      doPreviewMove: action(this.doMoveTrackPreviewMove.bind(this)),
+      doAcceptMove: action(this.doMoveTrackAcceptMove.bind(this)),
+      doCancelMove: action(this.clearMoveTracksPreview.bind(this)),
     };
     this.trackGroupViewHost = {
       doPlayTrackGroupView(groupView) {
@@ -64,7 +69,10 @@ export class NanoApp extends LitElement {
       },
       doSelectTrackGroupView: this.doSelectTrackGroupView.bind(this),
     };
-    this.selection.onSelectionChanged.add(this.updateSelectionInTrackView.bind(this));
+    this.selection.onSelectionChanged.add(() => {
+      this.clearMoveTracksPreview();
+      this.updateSelectionInTrackView();
+    });
     makeObservable(this);
     NanoApp.instance = this;
   }
@@ -88,6 +96,8 @@ export class NanoApp extends LitElement {
       observe(this.trackListView, 'viewportMinIndex', updateTracks);
       observe(this.trackListView, 'viewportMaxIndex', updateTracks);
       updateTracks();
+
+      autorun(() => { this.trackListView.insertMarkerPos = this.previewMoveInsertPos ?? undefined; });
 
       Database.instance.onTrackPathsUpdated.add((paths) => {
         setTimeout(async () => {
@@ -210,9 +220,9 @@ export class NanoApp extends LitElement {
   private queryAreaKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      e.stopPropagation();
       this.doToggleQueryInputField(false);
     }
+    e.stopPropagation();
   }
 
   @action
@@ -377,6 +387,12 @@ export class NanoApp extends LitElement {
       } else {
         this.doToggleQueryInputField();
       }
+    } else if (e.key === 'Enter') {
+      this.doPlaySelected();
+    } else if (e.key === 'ArrowUp') {
+      this.doMoveSelection(-1, e.shiftKey ? SelectionMode.SelectToRange : SelectionMode.Select);
+    } else if (e.key === 'ArrowDown') {
+      this.doMoveSelection(1, e.shiftKey ? SelectionMode.SelectToRange : SelectionMode.Select);
     } else {
       captured = false;
     }
@@ -440,6 +456,11 @@ export class NanoApp extends LitElement {
 
   @action
   doPlaySelected() {
+    const [index, track] = this.selection.primary;
+    if (index === undefined) {
+      return;
+    }
+    this.doPlayTrack(index, track);
   }
 
   @action
@@ -456,6 +477,16 @@ export class NanoApp extends LitElement {
     });
   }
 
+  @action
+  doMoveSelection(delta: number, mode: SelectionMode) {
+    const [oldIndex, track] = this.selection.primary;
+    let newIndex = (oldIndex ?? 0) + delta;
+    newIndex = Math.max(0, Math.min(this.trackViewCursor!.trackCount - 1, newIndex));
+    this.selection.select(newIndex, undefined, mode);
+    this.trackListView.ensureVisible(newIndex, constants.ENSURE_VISIBLE_PADDING);
+  }
+
+  @action
   doSelectTrackView(trackView: TrackView, mode: SelectionMode) {
     if (!trackView.track) {
       return;
@@ -464,6 +495,43 @@ export class NanoApp extends LitElement {
     this.trackViewCursor?.setAnchor?.({ index: trackView.index, path: trackView.track.path });
   }
 
+  @action
+  doMoveTrackPreviewMove(trackView: TrackView, delta: number): void {
+    this.previewMoveDelta += delta;
+    let previewMoveInsertPos: number|undefined = undefined;
+    const indicesToMove = Array.from(this.selection.all).sort((a, b) => a - b);
+    if (indicesToMove.length > 0) {
+      if (this.previewMoveDelta > 0) {
+        previewMoveInsertPos = indicesToMove[indicesToMove.length - 1] + this.previewMoveDelta + 1;
+      } else if (this.previewMoveDelta < 0) {
+        previewMoveInsertPos = indicesToMove[0] + this.previewMoveDelta;
+      }
+    }
+
+    if (previewMoveInsertPos !== undefined) {
+      const oldPos = previewMoveInsertPos;
+      previewMoveInsertPos = Math.max(0, Math.min(this.trackViewCursor!.trackCount, previewMoveInsertPos));
+      const deltaAdjust = oldPos - previewMoveInsertPos;
+      this.previewMoveDelta -= deltaAdjust;
+    }
+    this.previewMoveInsertPos = previewMoveInsertPos ?? null;
+    console.log(`move delta: ${this.previewMoveDelta} insert at ${this.previewMoveInsertPos}`);
+  }
+
+  @action
+  doMoveTrackAcceptMove(trackView: TrackView): void {
+    this.doPlaylistMoveSelected(this.previewMoveDelta);
+    this.previewMoveDelta = 0;
+    this.previewMoveInsertPos = null;
+  }
+
+  @action
+  clearMoveTracksPreview() {
+    this.previewMoveDelta = 0;
+    this.previewMoveInsertPos = null;
+  }
+
+  @action
   doSelectTrackGroupView(groupView: TrackGroupView, mode: SelectionMode) {
     this.selection.select(groupView.startIndex, groupView.track, SelectionMode.Select);
     this.selection.select(groupView.endIndex, undefined, SelectionMode.SelectToRange);
@@ -604,7 +672,9 @@ export class NanoApp extends LitElement {
       const tracks = Array.from(updatedResults.results);
       const track = tracks.at(0);
       if (track && track.path === this.currentPlayTrack?.path) {
-        this.currentPlayTrack = track;
+        runInAction(() => {
+          this.currentPlayTrack = track;
+        });
       }
     }
   }
@@ -683,7 +753,7 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  doSortList(sortType: CmdSortTypes) {
+  async doSortList(sortType: CmdSortTypes) {
     let sortContext: SortContext|undefined = undefined;
     switch (sortType) {
       case CmdSortTypes.Title:
@@ -702,8 +772,26 @@ export class NanoApp extends LitElement {
         sortContext = SortContext.Index;
         break;
     }
-    this.trackViewSortContext = sortContext;
-    this.updateTrackDataInViewport();
+    if (this.trackViewCursor!.primarySource !== ListPrimarySource.Playlist) {
+      this.trackViewSortContext = sortContext;
+      this.updateTrackDataInViewport();
+    } else {
+      if (sortContext === undefined) {
+        return;
+      }
+      const playlistKey = this.resolveSource(this.trackViewCursor!.source).secondary;
+      if (playlistKey === undefined) {
+        return;
+      }
+      await PlaylistManager.instance.updatePlaylistWithCallback(playlistKey, (allEntries) => {
+        allEntries.sort((a, b) => {
+          const keyA = Database.getSortKeyForContext(a, sortContext!) ?? '';
+          const keyB = Database.getSortKeyForContext(b, sortContext!) ?? '';
+          return keyA.localeCompare(keyB);
+        });
+        return allEntries.map(track => track.path);
+      });
+    }
   }
 
   @action
@@ -768,7 +856,16 @@ export class NanoApp extends LitElement {
 
   @action
   async doPlaylistAddSelected(playlistArgStr: string) {
-    const playlist = await this.resolvePlaylistArg(playlistArgStr);
+    let playlist = await this.resolvePlaylistArg(playlistArgStr);
+    if (playlist === undefined) {
+      const toCreate = playlistArgStr.trim();
+      if (!toCreate) {
+        return;
+      }
+      const newEntry = Database.instance.addPlaylist(toCreate);
+      console.log(`Created ${newEntry.name} : ${newEntry.key}`);
+      playlist = await PlaylistManager.instance.getPlaylist(newEntry.key);
+    }
     if (playlist === undefined) {
       return;
     }
@@ -790,9 +887,12 @@ export class NanoApp extends LitElement {
     const paths: string[] = await Promise.all(pathPromises);
     const newEntries = Array.from(playlist.entryPaths).concat(paths);
     await PlaylistManager.instance.updatePlaylist(playlist.key, newEntries);
-    this.updateTrackDataInViewport();
 
     console.log(playlist.entryPaths.join(', '));
+
+    this.trackViewPlaylist = playlist.key;
+    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+    this.updateTrackDataInViewport();
   }
 
   @action
@@ -805,7 +905,7 @@ export class NanoApp extends LitElement {
       return;
     }
 
-    const indicesToRemove = Array.from(this.selection.all).sort().reverse();
+    const indicesToRemove = Array.from(this.selection.all).sort((a, b) => a - b).reverse();
     const newEntries = Array.from(playlist.entryPaths);
     for (const indexToRemove of indicesToRemove) {
       newEntries.splice(indexToRemove, 1);
@@ -828,12 +928,51 @@ export class NanoApp extends LitElement {
   }
 
   @action
+  async doPlaylistMoveSelected(delta: number) {
+    const playlistKey = this.resolveSource(this.trackViewCursor!.source).secondary;
+    if (playlistKey === undefined) {
+      return;
+    }
+    const toMoveIndexes = this.selection.all;
+    if (toMoveIndexes.length === 0) {
+      return;
+    }
+    toMoveIndexes.sort((a, b) => a - b).reverse();
+    const minIndex = toMoveIndexes[toMoveIndexes.length - 1];
+    const maxIndex = toMoveIndexes[0];
+    let insertMin = 0;
+    let insertMax = 0;
+    await PlaylistManager.instance.updatePlaylistWithCallback(playlistKey, (allEntries) => {
+      const newPaths = allEntries.map(track => track.path);
+      const toReinsert: string[] = [];
+      for (const index of toMoveIndexes) {
+        const removed = newPaths.splice(index, 1).at(0);
+        if (removed === undefined) {
+          continue;
+        }
+        toReinsert.push(removed);
+      }
+      let insertIndex;
+      if (delta <= 0) {
+        insertIndex = Math.max(0, Math.min(newPaths.length, minIndex + delta));
+      } else {
+        insertIndex = Math.max(0, Math.min(newPaths.length, maxIndex - toReinsert.length + 1 + delta));
+      }
+      insertMin = insertIndex;
+      insertMax = insertIndex + toReinsert.length - 1;
+      return newPaths.slice(0, insertIndex).concat(toReinsert).concat(newPaths.slice(insertIndex));
+    });
+    this.selection.select(insertMin, undefined, SelectionMode.Select);
+    this.selection.select(insertMax, undefined, SelectionMode.SelectToRange);
+  }
+
+  @action
   async doPlaylistNew(playlistName: string) {
     const newEntry = Database.instance.addPlaylist(playlistName);
     console.log(`Created ${newEntry.name} : ${newEntry.key}`);
-    this.trackViewPlaylist = newEntry.key;
-    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
-    this.updateTrackDataInViewport();
+    // this.trackViewPlaylist = newEntry.key;
+    // this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+    // this.updateTrackDataInViewport();
   }
 
   @action
@@ -896,7 +1035,7 @@ export class NanoApp extends LitElement {
       });
     }
 
-    const blockSize = LIST_VIEW_PEEK_LOOKAHEAD;
+    const blockSize = constants.LIST_VIEW_PEEK_LOOKAHEAD;
     const viewportMinIndex = this.trackListView.viewportMinIndex;
     const viewportMaxIndex = this.trackListView.viewportMaxIndex;
     const peekMin = Math.max(0, (Math.floor(viewportMinIndex / blockSize) - 1) * blockSize);
@@ -1345,13 +1484,21 @@ input {
   overflow: hidden;
   text-wrap: nowrap;
   text-overflow: ellipsis;
-  background-color: var(--theme-color3);
+  background-color: var(--theme-color2);
   border-radius: 1.5em;
   padding: 0.5em 1em;
   pointer-events: auto;
 }
 
 .query-completion-chip:hover {
+  background-color: var(--theme-color4);
+}
+
+.query-completion-chip.special {
+  background-color: var(--theme-color3);
+}
+
+.query-completion-chip.special:hover {
   background-color: var(--theme-color4);
 }
 
@@ -1493,7 +1640,13 @@ input {
     </div>
     <div class="query-completion-area">
       ${this.completions.map(c => html`
-        <div class="query-completion-chip click-target" @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
+        <div
+            class=${classMap({
+              'query-completion-chip': true,
+              'click-target': true,
+              'special': getChipLabel(c) || false,
+            })}
+            @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
           <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
           <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
         </div>
@@ -1519,7 +1672,8 @@ input {
         elementConstructor: () => new TrackView(),
         elementDataSetter: (trackView, index, track) => {
           const playIndex = this.playCursor?.anchor?.index;
-      
+          const isPlaylistContext = this.trackViewCursor?.source?.source === ListPrimarySource.Playlist;
+
           trackView.index = index;
           trackView.track = track;
           trackView.host = this.trackViewHost;
@@ -1528,6 +1682,7 @@ input {
           trackView.selected = this.selection.has(index);
           trackView.highlighted = index === primaryIndex;
           trackView.playing = index === playIndex;
+          trackView.showReorderControls = isPlaylistContext;
         },
 
         groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.metadata?.album,
@@ -1539,6 +1694,8 @@ input {
           groupView.track = track;
           groupView.host = this.trackGroupViewHost;
         },
+
+        insertMarkerConstructor: () => new TrackInsertMarkerView(),
       }
       this.trackListView.ready();
     }

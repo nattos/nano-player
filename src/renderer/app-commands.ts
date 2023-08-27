@@ -175,6 +175,7 @@ export function getCommands(app: NanoApp) {
               name: 'Playlist manipulation',
               desc: 'Performs commands on playlists.',
               atomPrefix: 'playlist',
+              executeOnAutoComplete: true,
               argSpec: [
                 {
                   subcommands: [
@@ -199,6 +200,7 @@ export function getCommands(app: NanoApp) {
                       argSpec: [
                         {
                           oneofProvider: playlistNameProvider,
+                          isString: true,
                         },
                       ],
                       executeOnAutoComplete: true,
@@ -237,6 +239,19 @@ export function getCommands(app: NanoApp) {
                       ],
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistClear, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:playlist move <delta>
+                      name: 'Move',
+                      desc: 'Changes the order of the selected tracks, moving them by an offset',
+                      atomPrefix: 'move',
+                      argSpec: [
+                        {
+                          isNumber: true,
+                        },
+                      ],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doPlaylistMoveSelected, app, CommandParser.resolveIntegerArg()),
                     },
                     {
                       // cmd:playlist show <playlist-name>

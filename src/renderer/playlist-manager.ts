@@ -2,6 +2,7 @@ import * as utils from './utils';
 import * as constants from './constants';
 import { makeObservable, observable, runInAction } from 'mobx';
 import { Database, UpdateMode } from './database';
+import { Track } from './schema';
 
 export class Playlist {
   @observable name: string;
@@ -88,6 +89,43 @@ export class PlaylistManager {
       });
       runInAction(() => {
         playlist!.entryPaths = newEntryPaths;
+      });
+    });
+  }
+
+  async updatePlaylistWithCallback(key: string, updaterFunc: (allEntries: Track[]) => string[]) {
+    return await this.queue.push(async () => {
+      let playlist = this.playlists.get(key);
+      if (playlist === undefined) {
+        throw new Error(`Playlist ${key} not found.`);
+      }
+      const oldEntryPaths = playlist.entryPaths;
+
+      await Database.instance.updateTracks(Array.from(oldEntryPaths), UpdateMode.UpdateOnly, (trackGetter) => {
+        const allEntries: Track[] = [];
+        for (const path of oldEntryPaths) {
+          const track = trackGetter(path);
+          if (track === undefined) {
+            continue;
+          }
+          allEntries.push(track);
+          track.inPlaylists = track.inPlaylists.filter(indexKey => Database.getPlaylistIndexKeyKey(indexKey) !== key);
+        }
+
+        const newEntryPaths = updaterFunc(allEntries);
+
+        let index = 0;
+        for (const path of newEntryPaths) {
+          const track = trackGetter(path);
+          if (track === undefined) {
+            continue;
+          }
+          track.inPlaylists.push(Database.makePlaylistIndexKey(key, index++));
+        }
+
+        runInAction(() => {
+          playlist!.entryPaths = newEntryPaths;
+        });
       });
     });
   }

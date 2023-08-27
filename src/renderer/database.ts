@@ -268,20 +268,7 @@ export class Database {
 
     if (keyRange === undefined) {
       const sortContext = source.sortContext ?? SortContext.Index;
-      const metadataPath = SORT_CONTEXTS_TO_METADATA_PATH.get(sortContext);
-      if (!metadataPath) {
-        return undefined;
-      }
-      let metadataKey: any = track;
-      for (const propPath of metadataPath) {
-        metadataKey = metadataKey[propPath];
-        if (metadataKey === undefined) {
-          break;
-        }
-      }
-      if (typeof metadataKey !== 'string') {
-        return undefined;
-      }
+      const metadataKey = Database.getSortKeyForContext(track, sortContext);
       keyRange = IDBKeyRange.only(metadataKey);
     }
 
@@ -568,6 +555,9 @@ export class Database {
   }
 
   setSearchQuery(query: string[]) {
+    if (utils.isDeepStrictEqual(this.nextSearchQuery, query)) {
+      return;
+    }
     this.nextSearchQuery = query;
     this.nextSearchQueryDirty = true;
     this.searchQueryUpdateCancel.resolve();
@@ -786,73 +776,25 @@ export class Database {
 
     await syncLibraryPathsOp;
     await syncPlaylistsOp;
-
-    if (constants.DEBUG_RESET_DATABASE && constants.DEBUG_INSERT_FAKE_DATA) {
-      function makeFakeTrack(path: string): Track {
-        return {
-          path: path,
-          addedDate: Date.now(),
-          indexedDate: 0,
-          indexedAtLastModifiedDate: 0,
-          inPlaylists: [],
-        };
-      }
-
-      this.database.then(async () => {
-        const tokens = [
-          'Abjure',
-          'Future',
-          'Picnic',
-          'Campus',
-          'Invest',
-          'Ship',
-          'Catfish',
-          'Jackpot',
-          'Significance',
-          'Carsick',
-          'Kitchenette',
-          'Sometimes',
-          'Celebrate',
-          'Law',
-          'Sublime',
-        ];
-
-        const toAdd: Track[] = [];
-
-        for (let i = 0; i < 10000; ++i) {
-          const tokenCount = Math.max(1, Math.round(Math.random() * 7));
-          let result = '';
-          for (let j = 0; j < tokenCount; ++j) {
-            const token = tokens[Math.round(Math.random() * tokens.length) % tokens.length];
-            if (j !== 0 && Math.random() < 0.5) {
-              result += ' ';
-            }
-            result += token;
-          }
-          toAdd.push(makeFakeTrack(result));
-        }
-        toAdd.push(makeFakeTrack("somePath"));
-        toAdd.push(makeFakeTrack("someOtherPath"));
-        toAdd.push(makeFakeTrack("わからん"));
-        toAdd.push(makeFakeTrack("わからなさ"));
-        toAdd.push(makeFakeTrack("からなー"));
-        toAdd.push(makeFakeTrack("totallyAwkward"));
-
-        await this.updateTracks(toAdd.map(track => track.path), UpdateMode.Upsert, (trackGetter) => {
-          for (const track of toAdd) {
-            const toUpdate = trackGetter(track.path);
-            if (toUpdate === undefined) {
-              continue;
-            }
-            utils.merge(toUpdate, track);
-          }
-        });
-        await this.setSearchQuery(["からな　ー"]);
-        console.log("done add");
-      });
-    }
-
     return db;
+  }
+
+  static getSortKeyForContext(track: Track, sortContext: SortContext): string|undefined {
+    const metadataPath = SORT_CONTEXTS_TO_METADATA_PATH.get(sortContext);
+    if (!metadataPath) {
+      return undefined;
+    }
+    let metadataKey: any = track;
+    for (const propPath of metadataPath) {
+      metadataKey = metadataKey[propPath];
+      if (metadataKey === undefined) {
+        break;
+      }
+    }
+    if (typeof metadataKey !== 'string') {
+      return undefined;
+    }
+    return metadataKey;
   }
 
   static getPathSourceKey(path: string) {

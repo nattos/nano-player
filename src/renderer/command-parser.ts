@@ -198,7 +198,7 @@ export class CommandParser {
 
         const token = rest.split(/[\s]+/).at(0) ?? rest;
         const oneofValues = arg.oneofProvider?.() ?? arg.oneof;
-        if (oneofValues) {
+        if (oneofValues && !isMatch) {
           if (oneofValues.indexOf(token) >= 0) {
             isMatch = true;
             // console.log(`Matched oneof arg ${token}`);
@@ -223,7 +223,7 @@ export class CommandParser {
             }
           }
         }
-        if (arg.isNumber) {
+        if (arg.isNumber && !isMatch) {
           const intValue = utils.parseIntOr(token);
           if (intValue !== undefined) {
             // console.log(`Matched number arg ${token}`);
@@ -242,7 +242,7 @@ export class CommandParser {
             }
           }
         }
-        if (arg.isString) {
+        if (arg.isString && !isMatch) {
           if (rest.length > 0) {
             // console.log(`Matched string arg ${token}`);
             resolvedArgs.push({ stringValue: rest });
@@ -301,6 +301,16 @@ export class CommandParser {
       const argValue = arg.stringValue ?? arg.oneofValue;
       if (!argValue) {
         throw Error(`Arg expected a string.`);
+      }
+      return argValue;
+    };
+  }
+
+  public static resolveIntegerArg(): CommandArgResolverFunc {
+    return (arg: CommandResolvedArg) => {
+      const argValue = arg.intValue;
+      if (argValue === undefined) {
+        throw Error(`Arg expected an integer.`);
       }
       return argValue;
     };

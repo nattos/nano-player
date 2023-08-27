@@ -11,6 +11,9 @@ import { Database } from './database';
 export interface TrackViewHost {
   doSelectTrackView(trackView: TrackView, mode: SelectionMode): void;
   doPlayTrackView(trackView: TrackView): void;
+  doPreviewMove(trackView: TrackView, delta: number): void;
+  doAcceptMove(trackView: TrackView): void;
+  doCancelMove(trackView: TrackView): void;
 }
 
 interface ExtendedMetadata {
@@ -21,6 +24,14 @@ interface ExtendedMetadata {
 @customElement('track-view')
 export class TrackView extends LitElement {
   static styles = css`
+.click-target {
+  user-select: none;
+  cursor: pointer;
+}
+.hidden {
+  display: none;
+}
+
 .row {
   position: relative;
   display: flex;
@@ -107,6 +118,52 @@ export class TrackView extends LitElement {
   overflow:hidden;
   text-overflow: ellipsis;
 }
+
+.row-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  user-select: none;
+  pointer-events: auto;
+}
+.row-controls-container {
+  position: absolute;
+  top: 0.25em;
+  right: 0.25em;
+  bottom: 0.25em;
+  pointer-events: auto;
+}
+.row-controls {
+  z-index: 2;
+  position: relative;
+  display: flex;
+  height: 100%;
+  align-items: stretch;
+}
+.row-controls-underlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--theme-bg);
+  opacity: 0.5;
+  z-index: 1;
+}
+
+.small-button {
+  display: flex;
+  width: 2.2em
+}
+.small-button:hover {
+  background-color: var(--theme-color4);
+}
+.small-button-text {
+  margin: auto;
+  letter-spacing: 0.1em;
+}
 `;
 
   @property() index = 0;
@@ -114,6 +171,7 @@ export class TrackView extends LitElement {
   @property() selected = false;
   @property() highlighted = false;
   @property() playing = false;
+  @property() showReorderControls = false;
   host?: TrackViewHost;
 
   private extendedMetadata: ExtendedMetadata = {};
@@ -141,6 +199,38 @@ export class TrackView extends LitElement {
     this.host?.doPlayTrackView(this);
   }
 
+  @action
+  doMoveUp(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
+    this.host?.doPreviewMove(this, -1);
+  }
+
+  @action
+  doMoveDown(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
+    this.host?.doPreviewMove(this, 1);
+  }
+
+  @action
+  doMoveAccept(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
+    this.host?.doAcceptMove(this);
+  }
+
+  @action
+  doMoveCancel(e: MouseEvent) {
+    if (e.button !== 0) {
+      return;
+    }
+    this.host?.doCancelMove(this);
+  }
+
   protected override update(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
     if (changedProperties.has('track')) {
       this.updateExtendedMetadata();
@@ -153,6 +243,11 @@ export class TrackView extends LitElement {
     this.extendedMetadata.codec = utils.filePathExtension(filePath).toUpperCase();
     const pathParts = filePath.split('/');
     this.extendedMetadata.pathParts = [pathParts?.at(-2) ?? '', pathParts?.at(-3) ?? '', pathParts?.at(-4) ?? ''];
+  }
+
+  private doStopPropagation(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   override render() {
@@ -177,6 +272,25 @@ export class TrackView extends LitElement {
   <div class="col-path-part">${this.extendedMetadata.pathParts?.at(1)}</div>
   <div class="col-path-part">${this.extendedMetadata.pathParts?.at(2)}</div>
   <div class="col-codec">${this.extendedMetadata.codec}</div>
+  <div
+      class=${classMap({
+        'row-overlay': true,
+        'hidden': !(this.selected && this.highlighted && this.showReorderControls),
+      })}>
+    <div
+        class="row-controls-container"
+        @mousedown=${this.doStopPropagation}
+        @click=${this.doStopPropagation}
+        @dblclick=${this.doStopPropagation}>
+      <div class="row-controls-underlay"></div>
+      <div class="row-controls">
+        <span class="small-button click-target" @click=${this.doMoveAccept}><div class="small-button-text">[☑︎]</div></span>
+        <span class="small-button click-target" @click=${this.doMoveCancel}><div class="small-button-text">[×]</div></span>
+        <span class="small-button click-target" @click=${this.doMoveUp}><div class="small-button-text">[↑]</div></span>
+        <span class="small-button click-target" @click=${this.doMoveDown}><div class="small-button-text">[↓]</div></span>
+      </div>
+    </div>
+  </div>
 </div>
     `;
   }

@@ -17,6 +17,8 @@ export interface RecyclerViewDataProvider<TElement extends HTMLElement, TData, T
   groupDataGetter?: (index: number) => TGroupData|undefined;
   groupElementConstructor?: () => TGroupElement;
   groupElementDataSetter?: (element: TGroupElement, groupStartIndex: number, groupEndIndex: number, data: TGroupData|undefined) => void;
+
+  insertMarkerConstructor?: () => HTMLElement;
 }
 
 @customElement('recycler-view')
@@ -24,6 +26,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   @query('#scroll-container') scrollContainer!: HTMLElement;
   @query('#content-area') contentArea!: HTMLElement;
   @query('#group-content-area') groupContentArea!: HTMLElement;
+  @query('#markers-area') markersArea!: HTMLElement;
 
   @property() rowHeight = 42;
   @property() totalCount = 100;
@@ -48,6 +51,9 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   private isOnScrollInFlight = false;
   private onUserScrolledDirty = false;
 
+  private insertMarkerPosField?: number;
+  private insertMarkerElement?: HTMLElement;
+
   constructor() {
     super();
     makeObservable(this);
@@ -62,6 +68,30 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
 
   get elementsInView(): TElement[] {
     return Array.from(this.elementsDisplayedMap.values());
+  }
+
+  get insertMarkerPos(): number|undefined { return this.insertMarkerPosField; }
+  set insertMarkerPos(index: number|undefined) {
+    if (this.insertMarkerPosField === index) {
+      return;
+    }
+    this.insertMarkerPosField = index;
+    if (index === undefined) {
+      this.insertMarkerElement?.remove();
+      this.insertMarkerElement = undefined;
+    } else {
+      if (!this.insertMarkerElement) {
+        this.insertMarkerElement = this.dataProvider?.insertMarkerConstructor?.();
+        if (!this.insertMarkerElement) {
+          return;
+        }
+      }
+      this.markersArea.appendChild(this.insertMarkerElement);
+      const element = this.insertMarkerElement;
+      element.style['position'] = 'absolute';
+      element.style['top'] = `${this.rowHeight * index}px`;
+      element.style['width'] = `100%`;
+    }
   }
 
   ensureVisible(center: number, padding: number) {
@@ -271,6 +301,14 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
       right: 0;
       pointer-events: none;
     }
+
+    .markers-area {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+    }
   `;
 
   override render() {
@@ -279,6 +317,8 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   <div id="content-area" class="content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
   </div>
   <div id="group-content-area" class="group-content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+  </div>
+  <div id="markers-area" class="markers-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
   </div>
 </div>
     `;
