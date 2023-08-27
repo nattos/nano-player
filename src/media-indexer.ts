@@ -318,7 +318,7 @@ export class MediaIndexer {
     let tags: JsMediaTags;
     try {
       tags = await tagsPromise;
-      console.log(tags);
+      // console.log(tags);
     } catch (e) {
       if ((e as any)?.type === 'tagFormat') {
         tags = {};

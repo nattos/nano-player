@@ -22,7 +22,7 @@ export class Selection<T> {
     return [this.primaryIndex, this.primaryValue];
   }
 
-  select(index: number, value: T, mode: SelectionMode) {
+  select(index: number, value: T|undefined, mode: SelectionMode) {
     this.primaryIndex = index;
     this.primaryValue = value;
     const oldSelectFromRangeIndex = this.selectFromRangeIndex;

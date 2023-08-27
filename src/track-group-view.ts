@@ -10,6 +10,11 @@ import { SelectionMode } from './selection';
 import { Database } from './database';
 import { ImageCache } from './ImageCache';
 
+export interface TrackGroupViewHost {
+  doPlayTrackGroupView(groupView: TrackGroupView): void;
+  doSelectTrackGroupView(groupView: TrackGroupView, mode: SelectionMode): void;
+}
+
 @customElement('track-group-view')
 export class TrackGroupView extends LitElement {
   static styles = css`
@@ -42,15 +47,18 @@ export class TrackGroupView extends LitElement {
 }
 `;
 
-  @property() index = 0;
+  @property() startIndex = 0;
+  @property() endIndex = 0;
   @property() track?: Track;
   @property() imageUrl?: string;
+  host?: TrackGroupViewHost;
   private imageLoadEpoch = 0;
 
   clicked(e: MouseEvent) {
     if (e.button !== 0) {
       return;
     }
+    this.host?.doSelectTrackGroupView(this, SelectionMode.Select);
   }
 
   @action
@@ -58,6 +66,7 @@ export class TrackGroupView extends LitElement {
     if (e.button !== 0) {
       return;
     }
+    this.host?.doPlayTrackGroupView(this);
   }
 
   override render() {

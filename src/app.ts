@@ -9,7 +9,7 @@ import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } f
 import * as utils from './utils';
 import * as constants from './constants';
 import { TrackView, TrackViewHost } from './track-view';
-import { TrackGroupView } from './track-group-view';
+import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { Track } from './schema';
 import { LIST_VIEW_PEEK_LOOKAHEAD } from './constants';
 import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
@@ -37,6 +37,7 @@ export class NanoApp extends LitElement {
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
   private readonly trackViewHost: TrackViewHost;
+  private readonly trackGroupViewHost: TrackGroupViewHost;
   readonly commandParser = new CommandParser(getCommands(this));
 
   private readonly audioElement = new Audio();
@@ -56,6 +57,12 @@ export class NanoApp extends LitElement {
         thisCapture.doPlayTrack(trackView.index, trackView.track);
       },
       doSelectTrackView: this.doSelectTrackView.bind(this),
+    };
+    this.trackGroupViewHost = {
+      doPlayTrackGroupView(groupView) {
+        thisCapture.doPlayTrack(groupView.startIndex, groupView.track);
+      },
+      doSelectTrackGroupView: this.doSelectTrackGroupView.bind(this),
     };
     this.selection.onSelectionChanged.add(this.updateSelectionInTrackView.bind(this));
     makeObservable(this);
@@ -115,6 +122,9 @@ export class NanoApp extends LitElement {
     this.queryInputForceShown = newState;
     if (this.queryInputForceShown) {
       if (initialQuery !== undefined) {
+        if (initialQuery === '') {
+          this.doSearchClear();
+        }
         this.queryInputElement.value = initialQuery;
       }
       this.queryChanged();
@@ -451,9 +461,15 @@ export class NanoApp extends LitElement {
       return;
     }
     this.selection.select(trackView.index, trackView.track, mode);
-    this.updateSelectionInTrackView();
-    if (trackView.track) {
-      this.trackViewCursor?.setAnchor?.({ index: trackView.index, path: trackView.track.path });
+    this.trackViewCursor?.setAnchor?.({ index: trackView.index, path: trackView.track.path });
+  }
+
+  doSelectTrackGroupView(groupView: TrackGroupView, mode: SelectionMode) {
+    this.selection.select(groupView.startIndex, groupView.track, SelectionMode.Select);
+    this.selection.select(groupView.endIndex, undefined, SelectionMode.SelectToRange);
+    this.selection.select(groupView.startIndex, groupView.track, SelectionMode.SetPrimary);
+    if (groupView.track) {
+      this.trackViewCursor?.setAnchor?.({ index: groupView.startIndex, path: groupView.track.path });
     }
   }
 
@@ -557,16 +573,18 @@ export class NanoApp extends LitElement {
 
     let didLoadImage = false;
     const loadImageUrlEpoch = ++this.currentPlayImageUrlEpoch;
-    setTimeout(() => {
+    setTimeout(action(() => {
       if (this.currentPlayImageUrlEpoch === loadImageUrlEpoch && !didLoadImage) {
         this.currentPlayImageUrl = null;
       }
-    });
+    }));
     if (foundTrack && foundTrack.coverArt) {
       const loadArtOp = (async () => {
         const url = await ImageCache.instance.getImageUrl(foundTrack.coverArt!);
         if (this.currentPlayImageUrlEpoch === loadImageUrlEpoch) {
-          this.currentPlayImageUrl = url ?? null;
+          runInAction(() => {
+            this.currentPlayImageUrl = url ?? null;
+          });
           didLoadImage = true;
         }
       })();
@@ -574,6 +592,10 @@ export class NanoApp extends LitElement {
   }
 
   private async reanchorPlayCursor() {
+    const oldAnchor = this.playCursor?.anchor;
+    if (!oldAnchor && this.currentPlayTrack) {
+      this.playCursor?.setAnchor({index: 0, path: this.currentPlayTrack.path});
+    }
     const updatedResults = await this.playCursor?.peekRegion(0, 0)?.updatedResultsPromise;
     if (updatedResults) {
       if (updatedResults.rebasedDelta !== undefined) {
@@ -1511,9 +1533,11 @@ input {
         groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.metadata?.album,
         groupDataGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex),
         groupElementConstructor: () => new TrackGroupView(),
-        groupElementDataSetter: (groupView, index, track) => {
-          groupView.index = index;
+        groupElementDataSetter: (groupView, startIndex, endIndex, track) => {
+          groupView.startIndex = startIndex;
+          groupView.endIndex = endIndex;
           groupView.track = track;
+          groupView.host = this.trackGroupViewHost;
         },
       }
       this.trackListView.ready();

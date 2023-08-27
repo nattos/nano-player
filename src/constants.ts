@@ -11,6 +11,6 @@ export const UPDATE_DELAY_MILLIS = 200;
 export const PARTIAL_SUMMARY_LENGTH = 1024;
 export const LIST_VIEW_PEEK_LOOKAHEAD = 128;
 export const INDEXED_FILES_PATTERN = /^.*\.(mp3|flac|m4a|wav|aif[f]?|mov|mp[e]?g)$/;
-export const COVER_ART_FILE_PATTERN = /^(cover|jacket)\.(jp[e]?g|png|bmp)$/;
+export const COVER_ART_FILE_PATTERN = /^(cover|jacket|folder)\.(jp[e]?g|png|bmp)$/;
 export const FILE_INDEXER_PARALLEL_COUNT = 8;
 export const PROGRAMMATIC_SCROLL_DURATION = 1000;

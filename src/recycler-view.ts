@@ -16,7 +16,7 @@ export interface RecyclerViewDataProvider<TElement extends HTMLElement, TData, T
   groupKeyGetter?: (index: number) => string|undefined;
   groupDataGetter?: (index: number) => TGroupData|undefined;
   groupElementConstructor?: () => TGroupElement;
-  groupElementDataSetter?: (element: TGroupElement, index: number, data: TGroupData|undefined) => void;
+  groupElementDataSetter?: (element: TGroupElement, groupStartIndex: number, groupEndIndex: number, data: TGroupData|undefined) => void;
 }
 
 @customElement('recycler-view')
@@ -86,6 +86,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
       }
       this.dataProvider?.elementDataSetter(element, i, this.dataProvider?.dataGetter(i));
     }
+    this.updateGroups();
   }
 
   private ensureElement(index: number): TElement|undefined {
@@ -158,6 +159,42 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
     }
 
     if (this.didReady) {
+      for (let i = spawnMinIndex; i < spawnMaxIndex + 1; ++i) {
+        this.ensureElement(i);
+      }
+
+      const collectWaterlevel = spawnMaxIndex - spawnMinIndex + this.elementCollectCountWaterlevel;
+      if (this.elementsDisplayedMap.size > collectWaterlevel) {
+        // Sweep elements.
+        const toCollect = [];
+        for (const [index, value] of this.elementsDisplayedMap) {
+          if (index < spawnMinIndex || index > spawnMaxIndex) {
+            toCollect.push(index);
+          }
+        }
+        for (const index of toCollect) {
+          this.freeElement(index);
+        }
+        // console.log(`collected: ${toCollect}`);
+      }
+      this.updateGroups();
+    }
+
+    // console.log(`viewport: scrollTop: ${scrollTop} scrollBottom: ${scrollBottom} viewportMinIndex: ${viewportMinIndex} viewportMaxIndex: ${viewportMaxIndex} alive-count: ${this.elementsDisplayedMap.size} free-count: ${this.elementFreePool.length}`);
+
+    this.viewportMinIndex = viewportMinIndex;
+    this.viewportMaxIndex = viewportMaxIndex;
+  }
+
+  private updateGroups() {
+    const scrollTop = this.scrollContainer!.scrollTop;
+    const scrollBottom = scrollTop + this.scrollContainer!.clientHeight;
+    const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
+    const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
+    const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - this.elementsInViewPaddingCount));
+    const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + this.elementsInViewPaddingCount));
+
+    if (this.didReady) {
       let nextGroupElementIndex = 0;
       let groupStartIndex = spawnMinIndex;
       let groupKey: string|undefined = undefined;
@@ -185,7 +222,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
             }
             if (groupElement) {
               const groupData = this.dataProvider.groupDataGetter?.(groupStartIndex);
-              this.dataProvider.groupElementDataSetter?.(groupElement, groupStartIndex, groupData);
+              this.dataProvider.groupElementDataSetter?.(groupElement, groupStartIndex, groupEndIndex, groupData);
 
               const groupRowCount = groupEndIndex - groupStartIndex + 1;
               groupElement.style['position'] = 'absolute';
@@ -203,7 +240,6 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
       }
 
       for (let i = spawnMinIndex; i < spawnMaxIndex + 1; ++i) {
-        this.ensureElement(i);
         maybeFinishGroup(i);
       }
       maybeFinishGroup(spawnMaxIndex, true);
@@ -214,27 +250,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
         }
         this.groupFreePool.push(...toRemove);
       }
-
-      const collectWaterlevel = spawnMaxIndex - spawnMinIndex + this.elementCollectCountWaterlevel;
-      if (this.elementsDisplayedMap.size > collectWaterlevel) {
-        // Sweep elements.
-        const toCollect = [];
-        for (const [index, value] of this.elementsDisplayedMap) {
-          if (index < spawnMinIndex || index > spawnMaxIndex) {
-            toCollect.push(index);
-          }
-        }
-        for (const index of toCollect) {
-          this.freeElement(index);
-        }
-        // console.log(`collected: ${toCollect}`);
-      }
     }
-
-    // console.log(`viewport: scrollTop: ${scrollTop} scrollBottom: ${scrollBottom} viewportMinIndex: ${viewportMinIndex} viewportMaxIndex: ${viewportMaxIndex} alive-count: ${this.elementsDisplayedMap.size} free-count: ${this.elementFreePool.length}`);
-
-    this.viewportMinIndex = viewportMinIndex;
-    this.viewportMaxIndex = viewportMaxIndex;
   }
 
   static styles = css`
