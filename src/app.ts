@@ -9,6 +9,7 @@ import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } f
 import * as utils from './utils';
 import * as constants from './constants';
 import { TrackView, TrackViewHost } from './track-view';
+import { TrackGroupView } from './track-group-view';
 import { Track } from './schema';
 import { LIST_VIEW_PEEK_LOOKAHEAD } from './constants';
 import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
@@ -31,7 +32,7 @@ export class NanoApp extends LitElement {
 
   @query('#query-input') queryInputElement!: HTMLInputElement;
   @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
-  @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track>;
+  @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track, TrackGroupView, Track>;
   @property() overlay?: Overlay;
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
@@ -1135,7 +1136,6 @@ export class NanoApp extends LitElement {
 .player {
   position: relative;
   flex: none;
-  --player-height: 7em;
   background-color: var(--theme-bg2);
   width: 100%;
   height: var(--player-height);
@@ -1492,20 +1492,30 @@ input {
         this.updateAnchorForTrackView();
       };
 
-      this.trackListView!.elementConstructor = () => new TrackView();
-      this.trackListView!.elementDataSetter = (trackView, index, track) => {
-        const playIndex = this.playCursor?.anchor?.index;
-    
-        trackView.index = index;
-        trackView.track = track;
-        trackView.host = this.trackViewHost;
+      this.trackListView.dataProvider = {
+        dataGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex),
+        elementConstructor: () => new TrackView(),
+        elementDataSetter: (trackView, index, track) => {
+          const playIndex = this.playCursor?.anchor?.index;
+      
+          trackView.index = index;
+          trackView.track = track;
+          trackView.host = this.trackViewHost;
 
-        const [primaryIndex, primaryTrack] = this.selection.primary;
-        trackView.selected = this.selection.has(index);
-        trackView.highlighted = index === primaryIndex;
-        trackView.playing = index === playIndex;
-      };
-      this.trackListView!.dataGetter = (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex);
+          const [primaryIndex, primaryTrack] = this.selection.primary;
+          trackView.selected = this.selection.has(index);
+          trackView.highlighted = index === primaryIndex;
+          trackView.playing = index === playIndex;
+        },
+
+        groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.metadata?.album,
+        groupDataGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex),
+        groupElementConstructor: () => new TrackGroupView(),
+        groupElementDataSetter: (groupView, index, track) => {
+          groupView.index = index;
+          groupView.track = track;
+        },
+      }
       this.trackListView.ready();
     }
 

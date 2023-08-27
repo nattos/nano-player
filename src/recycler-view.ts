@@ -1,4 +1,4 @@
-import {html, LitElement, PropertyValueMap} from 'lit';
+import {css, html, LitElement, PropertyValueMap} from 'lit';
 import {} from 'lit/html';
 import {customElement, property, query} from 'lit/decorators.js';
 import {styleMap} from 'lit-html/directives/style-map.js';
@@ -8,19 +8,29 @@ import * as constants from './constants';
 
 export function init() {}
 
-@customElement('recycler-view')
-export class RecyclerView<TElement extends HTMLElement, TData> extends LitElement {
-  private static readonly elementCollectCountWaterlevel = 16;
-  private static readonly elementsInViewPaddingCount = 4;
+export interface RecyclerViewDataProvider<TElement extends HTMLElement, TData, TGroupElement extends HTMLElement|void = void, TGroupData = void> {
+  dataGetter: (index: number) => TData|undefined;
+  elementConstructor: () => TElement;
+  elementDataSetter: (element: TElement, index: number, data: TData|undefined) => void;
 
+  groupKeyGetter?: (index: number) => string|undefined;
+  groupDataGetter?: (index: number) => TGroupData|undefined;
+  groupElementConstructor?: () => TGroupElement;
+  groupElementDataSetter?: (element: TGroupElement, index: number, data: TGroupData|undefined) => void;
+}
+
+@customElement('recycler-view')
+export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement extends HTMLElement|void = void, TGroupData = void> extends LitElement {
   @query('#scroll-container') scrollContainer!: HTMLElement;
   @query('#content-area') contentArea!: HTMLElement;
+  @query('#group-content-area') groupContentArea!: HTMLElement;
 
   @property() rowHeight = 42;
   @property() totalCount = 100;
-  elementConstructor?: () => TElement;
-  elementDataSetter?: (element: TElement, index: number, data: TData|undefined) => void;
-  dataGetter?: (index: number) => TData|undefined;
+  dataProvider?: RecyclerViewDataProvider<TElement, TData, TGroupElement, TGroupData>;
+
+  elementCollectCountWaterlevel = 16;
+  elementsInViewPaddingCount = 16;
 
   onUserScrolled?: () => void;
   userScrolledUpdateDelay = 100;
@@ -31,6 +41,9 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   private didReady = false;
   private readonly elementsDisplayedMap = new Map<number, TElement>();
   private readonly elementFreePool: TElement[] = [];
+  private readonly groupDisplayedList: TGroupElement[] = [];
+  private readonly groupFreePool: TGroupElement[] = [];
+
   private lastProgrammaticScrollTimestamp = 0;
   private isOnScrollInFlight = false;
   private onUserScrolledDirty = false;
@@ -41,7 +54,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
   }
 
   ready() {
-    if (this.didReady || !this.contentArea || !this.elementConstructor || !this.elementDataSetter || !this.dataGetter) {
+    if (this.didReady || !this.contentArea || !this.dataProvider) {
       return;
     }
     this.didReady = true;
@@ -71,7 +84,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
       if (element === undefined) {
         continue;
       }
-      this.elementDataSetter?.(element, i, this.dataGetter?.(i));
+      this.dataProvider?.elementDataSetter(element, i, this.dataProvider?.dataGetter(i));
     }
   }
 
@@ -82,7 +95,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     }
     element = this.elementFreePool.pop();
     if (element === undefined) {
-      element = this.elementConstructor?.();
+      element = this.dataProvider?.elementConstructor();
       if (element === undefined) {
         return undefined;
       }
@@ -94,7 +107,7 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     this.contentArea.appendChild(element);
     this.elementsDisplayedMap.set(index, element);
 
-    this.elementDataSetter?.(element, index, this.dataGetter?.(index));
+    this.dataProvider?.elementDataSetter(element, index, this.dataProvider?.dataGetter(index));
     return element;
   }
 
@@ -135,8 +148,8 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     const scrollBottom = scrollTop + this.scrollContainer!.clientHeight;
     const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
     const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
-    const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - RecyclerView.elementsInViewPaddingCount));
-    const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + RecyclerView.elementsInViewPaddingCount));
+    const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - this.elementsInViewPaddingCount));
+    const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + this.elementsInViewPaddingCount));
 
     if (!force) {
       if (this.viewportMinIndex === viewportMinIndex && this.viewportMaxIndex === viewportMaxIndex) {
@@ -145,10 +158,64 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     }
 
     if (this.didReady) {
+      let nextGroupElementIndex = 0;
+      let groupStartIndex = spawnMinIndex;
+      let groupKey: string|undefined = undefined;
+      const maybeFinishGroup = (index: number, force = false) => {
+        if (!this.dataProvider?.groupKeyGetter || !this.dataProvider?.groupElementConstructor) {
+          return;
+        }
+        const nextGroupKey = this.dataProvider.groupKeyGetter(index);
+        if (groupKey !== nextGroupKey || force) {
+          const groupEndIndex = index - 1;
+          if (groupEndIndex >= groupStartIndex) {
+            // Create this group.
+            // console.log(`group from {${groupStartIndex} - ${groupEndIndex}} for ${groupKey}`);
+
+            let groupElement: TGroupElement|undefined;
+            if (nextGroupElementIndex < this.groupDisplayedList.length) {
+              groupElement = this.groupDisplayedList[nextGroupElementIndex];
+            }
+            if (groupElement === undefined) {
+              groupElement = this.groupFreePool.pop() ?? this.dataProvider.groupElementConstructor();
+              if (groupElement !== undefined) {
+                this.groupContentArea.appendChild(groupElement);
+                this.groupDisplayedList.push(groupElement);
+              }
+            }
+            if (groupElement) {
+              const groupData = this.dataProvider.groupDataGetter?.(groupStartIndex);
+              this.dataProvider.groupElementDataSetter?.(groupElement, groupStartIndex, groupData);
+
+              const groupRowCount = groupEndIndex - groupStartIndex + 1;
+              groupElement.style['position'] = 'absolute';
+              groupElement.style['height'] = `${this.rowHeight * groupRowCount}px`;
+              groupElement.style['top'] = `${this.rowHeight * groupStartIndex}px`;
+              groupElement.style['width'] = `100%`;
+            }
+            nextGroupElementIndex++;
+          }
+
+          // Advance group.
+          groupStartIndex = index;
+          groupKey = nextGroupKey;
+        }
+      }
+
       for (let i = spawnMinIndex; i < spawnMaxIndex + 1; ++i) {
         this.ensureElement(i);
+        maybeFinishGroup(i);
       }
-      const collectWaterlevel = spawnMaxIndex - spawnMinIndex + RecyclerView.elementCollectCountWaterlevel;
+      maybeFinishGroup(spawnMaxIndex, true);
+      if (nextGroupElementIndex < this.groupDisplayedList.length) {
+        const toRemove = this.groupDisplayedList.splice(nextGroupElementIndex);
+        for (const groupElement of toRemove) {
+          groupElement?.remove();
+        }
+        this.groupFreePool.push(...toRemove);
+      }
+
+      const collectWaterlevel = spawnMaxIndex - spawnMinIndex + this.elementCollectCountWaterlevel;
       if (this.elementsDisplayedMap.size > collectWaterlevel) {
         // Sweep elements.
         const toCollect = [];
@@ -170,10 +237,31 @@ export class RecyclerView<TElement extends HTMLElement, TData> extends LitElemen
     this.viewportMaxIndex = viewportMaxIndex;
   }
 
+  static styles = css`
+    .scroll-container {
+      height: 100%;
+      overflow: scroll;
+      position: relative;
+    }
+
+    .content-area {
+    }
+
+    .group-content-area {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+    }
+  `;
+
   override render() {
     return html`
-<div id="scroll-container" style="height: 100%; overflow: scroll; position: relative;" @scroll=${this.onScroll}>
-  <div id="content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+<div id="scroll-container" class="scroll-container" @scroll=${this.onScroll}>
+  <div id="content-area" class="content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+  </div>
+  <div id="group-content-area" class="group-content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
   </div>
 </div>
     `;

@@ -229,7 +229,7 @@ export class MediaIndexer {
         let coverArtRef: ArtworkRef|undefined = undefined;
         if (containingDirectory) {
           const allFiles = await utils.arrayFromAsync(this.enumerateImmediateFiles(containingDirectory));
-          const coverArtFile = allFiles.find(file => constants.COVER_ART_FILE_PATTERN.test(file.name));
+          const coverArtFile = allFiles.find(file => constants.COVER_ART_FILE_PATTERN.test(file.name.toLocaleLowerCase()));
           if (coverArtFile) {
             const coverArtFilePath = Database.makePath(sourceKey, [containingDirectoryPath, coverArtFile.name]);
             coverArtRef = { fromImageFileAtPath: coverArtFilePath };

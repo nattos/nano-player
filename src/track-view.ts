@@ -22,9 +22,11 @@ interface ExtendedMetadata {
 export class TrackView extends LitElement {
   static styles = css`
 .row {
+  position: relative;
   display: flex;
-  width: calc(100% - 2px);
+  width: calc(100% - 2px - var(--theme-row-group-head-width));
   height: calc(100% - 2px);
+  left: var(--theme-row-group-head-width);
   gap: 1em;
   flex-wrap: nowrap;
   align-items: center;
@@ -45,6 +47,9 @@ export class TrackView extends LitElement {
 }
 .row.selected {
   background-color: var(--theme-hi-bg);
+}
+.col-group-head {
+  width: var(--theme-row-group-head-width);
 }
 .col-index {
   flex-grow: 0.1;

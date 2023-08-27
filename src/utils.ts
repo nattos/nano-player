@@ -135,7 +135,7 @@ export class AsyncProducerConsumerQueue<T> {
 export class LruCache<TKey, TValue> {
   private readonly values = new Map<TKey, TValue>();
 
-  constructor(public readonly maxEntries: number) {}
+  constructor(public readonly maxEntries: number, public readonly evictCallback?: (evicted: TValue) => void) {}
 
   entries() {
     return this.values.entries();
@@ -155,13 +155,27 @@ export class LruCache<TKey, TValue> {
   put(key: TKey, value: TValue) {
     if (this.values.size >= this.maxEntries) {
       // least-recently used cache eviction strategy
-      const keyToDelete = this.values.keys().next().value;
-      this.values.delete(keyToDelete);
+      const keyToDelete = this.values.keys().next().value as TKey;
+      if (keyToDelete !== undefined) {
+        const valueToEvict = this.values.get(keyToDelete);
+        this.values.delete(keyToDelete);
+        if (valueToEvict !== undefined) {
+          this.evictCallback?.(valueToEvict);
+        }
+      }
     }
     this.values.set(key, value);
   }
 
   clear() {
+    if (this.evictCallback) {
+      const toEvict = Array.from(this.values.values());
+      this.values.clear();
+      for (const value of toEvict) {
+        this.evictCallback(value);
+      }
+      return;
+    }
     this.values.clear();
   }
 }

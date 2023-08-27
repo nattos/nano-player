@@ -13,7 +13,7 @@ body {
   --theme-fg2: #E0E0E0;
   --theme-fg3: #C0C0C0;
   --theme-fg4: rgb(112, 112, 112);
-  --theme-hi-bg: var(--theme-color3);
+  --theme-hi-bg: color-mix(in srgb-linear, var(--theme-color3) 20%, var(--theme-bg3));
   --theme-hi-fg: var(--theme-fg);
   --theme-hi-border: var(--theme-color5);
   --theme-row-odd-bg: var(--theme-bg);
@@ -25,4 +25,7 @@ body {
 
   background-color: var(--theme-bg);
   color: var(--theme-fg2);
+
+  --player-height: 7em;
+  --theme-row-group-head-width: var(--player-height);
 }

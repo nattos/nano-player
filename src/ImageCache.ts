@@ -14,13 +14,16 @@ export class ImageCache {
   private static instanceField?: ImageCache;
 
   // TODO: For now, a queue of 1.
-  private lastImageUrlPath = '';
-  private lastImageUrl: string = '';
+  private cachedImages = new utils.LruCache<string, string>(constants.IMAGE_CACHE_SIZE, this.evicted.bind(this));
 
   async getImageUrl(artworkRef: ArtworkRef): Promise<string|undefined> {
-    if (this.lastImageUrlPath === artworkRef.fromImageFileAtPath ||
-        this.lastImageUrlPath === artworkRef.fromImageInFileMetadataAtPath) {
-      return this.lastImageUrl;
+    const cachedFromImageFileAtPath = artworkRef.fromImageFileAtPath && this.cachedImages.get(artworkRef.fromImageFileAtPath);
+    if (cachedFromImageFileAtPath) {
+      return cachedFromImageFileAtPath;
+    }
+    const cachedFromImageInFileMetadataAtPath = artworkRef.fromImageInFileMetadataAtPath && this.cachedImages.get(artworkRef.fromImageInFileMetadataAtPath);
+    if (cachedFromImageInFileMetadataAtPath) {
+      return cachedFromImageInFileMetadataAtPath;
     }
     await Database.instance.waitForLoad();
 
@@ -36,10 +39,12 @@ export class ImageCache {
     if (result === undefined) {
       return undefined;
     }
-    URL.revokeObjectURL(this.lastImageUrl);
-    this.lastImageUrlPath = loadedPath;
-    this.lastImageUrl = result;
+    this.cachedImages.put(loadedPath, result);
     return result;
+  }
+
+  private evicted(imageUrl: string) {
+    URL.revokeObjectURL(imageUrl);
   }
 
   private async loadImageFile(path: string): Promise<string|undefined> {
