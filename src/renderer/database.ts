@@ -116,7 +116,7 @@ export class Database {
 
   @observable searchResultsStatus: SearchResultStatus = SearchResultStatus.NoQuery;
   @observable partialSearchResultsAvailable = 0;
-  @observable partialSearchResultsSummary: Track[] = [];
+  @observable.shallow partialSearchResultsSummary: Track[] = [];
   @observable searchContextEpoch = 0;
   @observable listChangeEpoch = 0;
   @observable trackDataChangeEpoch = 0;
@@ -173,7 +173,7 @@ export class Database {
     return newEntry;
   }
 
-  async setLibraryPathIndexedSubpaths(path: string, subpaths: string[]) {
+  async setLibraryPathIndexedSubpaths(path: string, subpaths: string[]): Promise<void> {
     await this.database;
 
     const entry = this.libraryPathsMap.get(path);

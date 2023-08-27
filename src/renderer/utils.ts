@@ -376,8 +376,38 @@ export async function arrayFromAsync<T>(asyncIterator: AsyncIterable<T>) {
   return result;
 }
 
+export function lazyOr<T>(getter: () => Promise<T>): () => Promise<T|undefined> {
+  let promise: Promise<T|undefined>|undefined = undefined;
+  return () => {
+    if (!promise) {
+      promise = getter().catch((e) => {
+        console.error(e);
+        return undefined;
+      });
+    }
+    return promise;
+  };
+}
+
+export function lazy<T, TResult extends Promise<T>|T>(getter: () => TResult): () => TResult {
+  let promise: TResult|undefined = undefined;
+  return () => {
+    if (!promise) {
+      promise = getter();
+    }
+    return promise;
+  };
+}
+
 export function upcast<T>(value: T) {
   return value;
+}
+
+export function nonvoid<T>(value: T|undefined|void): T|undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value as T;
 }
 
 export function getEnumValues<T>(enumClass: { [s: string]: string }) {

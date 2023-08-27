@@ -336,7 +336,7 @@ export class NanoApp extends LitElement {
 
     const libraryPaths = Database.instance.getLibraryPaths();
     let resolvedLibraryPath = undefined;
-    let resolvedLibrarySubpath = undefined;
+    let resolvedLibrarySubpath: string[]|undefined = undefined;
     for (const entry of libraryPaths) {
       const resolvedPath = await entry.directoryHandle?.resolve(directoryHandle);
       if (resolvedPath) {
@@ -882,7 +882,7 @@ export class NanoApp extends LitElement {
   @observable.shallow tracksInView: Array<Track|undefined> = [];
   tracksInViewBaseIndex = 0;
 
-  @observable completions: CandidateCompletion[] = [];
+  @observable.shallow completions: CandidateCompletion[] = [];
 
   @action
   private updateTrackDataInViewport() {

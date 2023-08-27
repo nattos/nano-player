@@ -3,24 +3,9 @@ const path = require('path');
 
 module.exports = [
   {
-    entry: './src/main/main.ts',
-    target: "electron-main",
-    output: {
-      filename: 'main.js',
-      path: path.resolve(__dirname, 'dist'),
-    },
-    module: {
-      rules: [{
-        test: /\.ts?$/,
-        use: 'ts-loader',
-        exclude: /node_modules/,
-      }]
-    },
-  },
-  {
     entry: './src/renderer/index.ts',
     devtool: "source-map",
-    target: 'electron-renderer',
+    target: 'web',
     module: {
       rules: [
         {
@@ -39,6 +24,9 @@ module.exports = [
       alias: {
         jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
       },
+    },
+    externals: {
+      'node:fs': 'commonjs2 node:fs'
     },
     output: {
       filename: 'bundle.js',

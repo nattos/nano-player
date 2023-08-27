@@ -5,7 +5,7 @@ import { Database, UpdateMode } from './database';
 
 export class Playlist {
   @observable name: string;
-  @observable entryPaths: string[] = [];
+  @observable.shallow entryPaths: string[] = [];
 
   constructor(public readonly key: string, name: string) {
     this.name = name;

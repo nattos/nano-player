@@ -215,8 +215,9 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
             }
             if (groupElement === undefined) {
               groupElement = this.groupFreePool.pop() ?? this.dataProvider.groupElementConstructor();
-              if (groupElement !== undefined) {
-                this.groupContentArea.appendChild(groupElement);
+              const htmlElement = utils.nonvoid<HTMLElement>(groupElement);
+              if (groupElement !== undefined && htmlElement !== undefined) {
+                this.groupContentArea.appendChild(htmlElement);
                 this.groupDisplayedList.push(groupElement);
               }
             }
@@ -246,7 +247,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
       if (nextGroupElementIndex < this.groupDisplayedList.length) {
         const toRemove = this.groupDisplayedList.splice(nextGroupElementIndex);
         for (const groupElement of toRemove) {
-          groupElement?.remove();
+          utils.nonvoid<HTMLElement>(groupElement)?.remove();
         }
         this.groupFreePool.push(...toRemove);
       }
