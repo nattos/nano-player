@@ -95,6 +95,7 @@ export class NanoApp extends LitElement {
 
       MediaIndexer.instance.start();
 
+      window.addEventListener('keydown', this.onWindowKeydown.bind(this));
       window.addEventListener('keypress', this.onWindowKeypress.bind(this));
       window.addEventListener('contextmenu', this.onWindowRightClick.bind(this));
     });
@@ -357,8 +358,25 @@ export class NanoApp extends LitElement {
   }
 
   @action
+  private onWindowKeydown(e: KeyboardEvent) {
+    let captured = true;
+    if (e.key === 'Escape') {
+      if (this.overlay) {
+        this.closeOverlay();
+      } else {
+        this.doToggleQueryInputField();
+      }
+    } else {
+      captured = false;
+    }
+    if (captured) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
+  @action
   private onWindowKeypress(e: KeyboardEvent) {
-    console.log(e);
     let captured = true;
     if (e.key === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       this.doPreviousTrack();
