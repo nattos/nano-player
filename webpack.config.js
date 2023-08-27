@@ -4,6 +4,7 @@ const path = require('path');
 module.exports = {
   entry: './src/index.ts',
   devtool: "source-map",
+  target: 'web',
   module: {
     rules: [
       {
@@ -19,6 +20,9 @@ module.exports = {
   },
   resolve: {
     extensions: ['.tsx', '.ts', '.js'],
+    alias: {
+      jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
+    },
   },
   output: {
     filename: 'bundle.js',
@@ -36,5 +40,10 @@ module.exports = {
     static: path.join(__dirname, "dist"),
     compress: true,
     port: 4000,
+  },
+
+  performance: {
+    maxAssetSize: 1048576,
+    maxEntrypointSize: 1048576,
   },
 };
