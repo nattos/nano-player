@@ -29,11 +29,8 @@ async function createWindow() {
     titleBarStyle: 'hiddenInset',
   })
 
+  mainWindow.loadFile(path.join(__dirname, './index.html'));
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL(`http://localhost:4000`);
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, './index.html'));
     mainWindow.webContents.openDevTools();
   }
   mainWindow.on('focus', () => { didWindowActiveChange(true); });
