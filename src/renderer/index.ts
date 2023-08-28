@@ -1,5 +1,5 @@
-import { NanoApp } from "./app";
-import "./style.css";
+import { NanoApp } from './app';
+import './stylesheets';
 
 document.body.appendChild(new NanoApp());
 

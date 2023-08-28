@@ -12,6 +12,7 @@ import * as environment from './environment';
 import { TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
+import './simple-icon-element';
 import { Track } from './schema';
 import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
@@ -31,6 +32,7 @@ enum Overlay {
 @customElement('nano-app')
 export class NanoApp extends LitElement {
   static instance?: NanoApp;
+  someStyles?: CSSStyleSheet;
 
   @query('#query-input') queryInputElement!: HTMLInputElement;
   @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
@@ -1403,15 +1405,13 @@ export class NanoApp extends LitElement {
   position: absolute;
   bottom: 0.2em;
   right: 0.2em;
-  height: 1em;
-  width: 1em;
+  height: 2em;
+  width: 2em;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border-width: 1px;
-  border-color: var(--theme-fg);
-  border-style: solid;
+  background-color: var(--theme-bg4);
   opacity: 0.5;
 }
 .player-artwork-expand-button:hover {
@@ -1498,6 +1498,7 @@ export class NanoApp extends LitElement {
 }
 
 .query-input-area {
+  position: relative;
   height: 4em;
   background-color: var(--theme-bg);
   margin: 2em 10em;
@@ -1507,15 +1508,22 @@ export class NanoApp extends LitElement {
   pointer-events: auto;
 }
 
+.query-input-icon {
+  position: absolute;
+  top: 50%;
+  left: 2.5em;
+  transform: translate(-100%, -50%);
+}
+
 .query-input {
   position: relative;
   bottom: 0.075em;
-  width: 100%;
+  width: calc(100% - 3em);
   height: 100%;
   font-size: 200%;
   border: none;
   background-color: transparent;
-  margin: 0 1em;
+  margin: 0px 1.5em;
   outline: none;
 }
 
@@ -1636,7 +1644,7 @@ input {
         @click=${this.doFocusPlayingTrack}>
       <div class="player-artwork-expand-overlay">
         <div class="player-artwork-expand-button click-target" @click=${this.showAlbumArtOverlay}>
-          <div>ℹ︎</div>
+          <simple-icon icon="search-plus"></simple-icon>
         </div>
       </div>
     </div>
@@ -1646,12 +1654,12 @@ input {
       <div class="player-album">${this.currentPlayTrack?.metadata?.album}</div>
     </div>
     <div class="player-controls">
-      <span class="small-button click-target" @click=${this.doPreviousTrack}><div class="player-controls-button-text">[|&lt;]</div></span>
-      <span class="small-button click-target" @click=${this.doPlay}><div class="player-controls-button-text">[|&gt;]</div></span>
-      <span class="small-button click-target" @click=${this.doPause}><div class="player-controls-button-text">[II]</div></span>
-      <span class="small-button click-target" @click=${this.doStop}><div class="player-controls-button-text">[#]</div></span>
-      <span class="small-button click-target" @click=${this.doNextTrack}><div class="player-controls-button-text">[&gt;|]</div></span>
-      <span class="small-button click-target" @click=${() => {this.doToggleQueryInputField();}}><div class="player-controls-button-text">Q</div></span>
+      <span class="small-button click-target" @click=${this.doPreviousTrack}><div class="player-controls-button-text"><simple-icon icon="step-backward"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doPlay}><div class="player-controls-button-text"><simple-icon icon="play"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doPause}><div class="player-controls-button-text"><simple-icon icon="pause"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doStop}><div class="player-controls-button-text"><simple-icon icon="stop"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doNextTrack}><div class="player-controls-button-text"><simple-icon icon="step-forward"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${() => {this.doToggleQueryInputField();}}><div class="player-controls-button-text"><simple-icon icon="bolt"></simple-icon></div></span>
     </div>
     <div
         id="player-seekbar"
@@ -1675,7 +1683,10 @@ input {
   <div class="window-title-text-container">
     <div class="window-title-text-part">${this.currentPlayTrack?.metadata?.title ?? ''}</div>
     <div class="window-title-text-part">${this.trackViewCursor?.secondarySource ?? 'library'}</div>
-    <div class="window-title-text-part">${this.isPlaying ? '_' : ''}nano-player</div>
+    <div class="window-title-text-part">nano-player</div>
+    <div class="window-title-text-part" style="overflow: visible; position: relative; left: -0.75em; display: flex;">
+      <simple-icon style="color: inherit; font-size: 18px;" icon=${this.isPlaying ? 'play' : 'bolt'}></simple-icon>
+    </div>
   </div>
   <div class="window-title-divider"></div>
 </div>
@@ -1715,6 +1726,7 @@ input {
   <div class="query-input-overlay">
     <div class="query-input-area" @keypress=${this.queryAreaKeypress} @keydown=${this.queryAreaKeydown}>
       <input id="query-input" class="query-input" @input=${this.queryChanged} @keypress=${this.queryKeypress}></input>
+      <div class="query-input-icon"><simple-icon icon="bolt"></simple-icon></div>
     </div>
     <div class="query-completion-area">
       ${this.completions.map(c => html`
@@ -1737,6 +1749,12 @@ input {
 
   protected updated(changedProperties: PropertyValueMap<any> | Map<PropertyKey, unknown>): void {
     super.updated(changedProperties);
+
+    document.title = [
+        this.currentPlayTrack?.metadata?.title ?? '',
+        this.trackViewCursor?.secondarySource ?? 'library',
+        'nano-player'
+    ].join(' _ ');
 
     if (!this.didReadyTrackListView) {
       this.didReadyTrackListView = true;

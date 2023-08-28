@@ -414,6 +414,13 @@ export function getEnumValues<T>(enumClass: { [s: string]: string }) {
   return Object.values(enumClass) as T[];
 }
 
+export function putKeyValues<T extends {}>(toUpdate: T, ...entries: Array<[key: string, value: unknown]>): {} {
+  for (const [key, value] of entries) {
+    (toUpdate as any)[key] = value;
+  }
+  return toUpdate;
+}
+
 export function merge<T1 extends object, T2 extends object>(onto: T1, from: T2): T1 & T2 {
   if (typeof from !== "object" || from instanceof Array) {
       throw new Error("merge: 'from' must be an ordinary object");

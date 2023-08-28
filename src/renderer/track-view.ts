@@ -4,6 +4,7 @@ import { customElement, property } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { action } from 'mobx';
 import * as utils from '../utils';
+import './simple-icon-element';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
 import { Database } from './database';
@@ -127,12 +128,16 @@ export class TrackView extends LitElement {
   bottom: 0;
   user-select: none;
   pointer-events: auto;
+  opacity: 0.0;
+}
+.row-overlay:hover {
+  opacity: 1.0;
 }
 .row-controls-container {
   position: absolute;
-  top: 0.25em;
-  right: 0.25em;
-  bottom: 0.25em;
+  top: -0.25em;
+  right: 1.5em;
+  bottom: -0.25em;
   pointer-events: auto;
 }
 .row-controls {
@@ -149,13 +154,13 @@ export class TrackView extends LitElement {
   right: 0;
   bottom: 0;
   background-color: var(--theme-bg);
-  opacity: 0.5;
+  opacity: 1.0;
   z-index: 1;
 }
 
 .small-button {
   display: flex;
-  width: 2.2em
+  aspect-ratio: 1 / 1;
 }
 .small-button:hover {
   background-color: var(--theme-color4);
@@ -284,10 +289,10 @@ export class TrackView extends LitElement {
         @dblclick=${this.doStopPropagation}>
       <div class="row-controls-underlay"></div>
       <div class="row-controls">
-        <span class="small-button click-target" @click=${this.doMoveAccept}><div class="small-button-text">[☑︎]</div></span>
-        <span class="small-button click-target" @click=${this.doMoveCancel}><div class="small-button-text">[×]</div></span>
-        <span class="small-button click-target" @click=${this.doMoveUp}><div class="small-button-text">[↑]</div></span>
-        <span class="small-button click-target" @click=${this.doMoveDown}><div class="small-button-text">[↓]</div></span>
+        <span class="small-button click-target" @click=${this.doMoveAccept}><div class="small-button-text"><simple-icon icon="check-circle"></simple-icon></div></span>
+        <span class="small-button click-target" @click=${this.doMoveCancel}><div class="small-button-text"><simple-icon icon="times-circle"></simple-icon></div></span>
+        <span class="small-button click-target" @click=${this.doMoveUp}><div class="small-button-text"><simple-icon icon="arrow-circle-up"></simple-icon></div></span>
+        <span class="small-button click-target" @click=${this.doMoveDown}><div class="small-button-text"><simple-icon icon="arrow-circle-down"></simple-icon></div></span>
       </div>
     </div>
   </div>
