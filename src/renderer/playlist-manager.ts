@@ -1,4 +1,4 @@
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 import { makeObservable, observable, runInAction } from 'mobx';
 import { Database, UpdateMode } from './database';

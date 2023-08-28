@@ -6,7 +6,7 @@ import { styleMap } from 'lit/directives/style-map.js';
 import { action, autorun, runInAction, observable, observe, makeObservable } from 'mobx';
 import { RecyclerView } from './recycler-view';
 import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 import * as environment from './environment';
 import { TrackView, TrackViewHost } from './track-view';
@@ -1675,7 +1675,7 @@ input {
   <div class="window-title-text-container">
     <div class="window-title-text-part">${this.currentPlayTrack?.metadata?.title ?? ''}</div>
     <div class="window-title-text-part">${this.trackViewCursor?.secondarySource ?? 'library'}</div>
-    <div class="window-title-text-part">nano-player</div>
+    <div class="window-title-text-part">${this.isPlaying ? '_' : ''}nano-player</div>
   </div>
   <div class="window-title-divider"></div>
 </div>

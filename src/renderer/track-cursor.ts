@@ -1,6 +1,6 @@
 import { ListPrimarySource, Database, SortContext, ListSource } from "./database";
 import { Track } from "./schema";
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 import { NanoApp } from "./app";
 

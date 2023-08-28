@@ -1,6 +1,6 @@
 import {} from 'lit/html';
 import { Reader as jsmediatagsReader } from 'jsmediatags';
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';

@@ -2,7 +2,7 @@ import { IDBPDatabase, IDBPObjectStore, IDBPTransaction, deleteDB, openDB } from
 import { observable, makeObservable, action, runInAction } from "mobx";
 import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry } from "./schema";
 import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 
 export enum ListPrimarySource {

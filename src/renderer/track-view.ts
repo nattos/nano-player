@@ -3,7 +3,7 @@ import {} from 'lit/html';
 import { customElement, property } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { action } from 'mobx';
-import * as utils from './utils';
+import * as utils from '../utils';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
 import { Database } from './database';

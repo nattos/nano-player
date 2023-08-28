@@ -3,7 +3,7 @@ import {} from 'lit/html';
 import {customElement, property, query} from 'lit/decorators.js';
 import {styleMap} from 'lit-html/directives/style-map.js';
 import {action, observable, makeObservable} from 'mobx';
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 
 export function init() {}

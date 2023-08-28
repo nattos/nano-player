@@ -4,7 +4,7 @@ import { customElement, property } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { action } from 'mobx';
-import * as utils from './utils';
+import * as utils from '../utils';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
 import { Database } from './database';

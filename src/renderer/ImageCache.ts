@@ -1,4 +1,4 @@
-import * as utils from './utils';
+import * as utils from '../utils';
 import * as constants from './constants';
 import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';
