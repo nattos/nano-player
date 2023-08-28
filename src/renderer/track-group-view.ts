@@ -18,6 +18,11 @@ export interface TrackGroupViewHost {
 @customElement('track-group-view')
 export class TrackGroupView extends LitElement {
   static styles = css`
+.click-target {
+  user-select: none;
+  cursor: pointer;
+}
+
 .group {
   display: flex;
   width: 100%;
@@ -71,13 +76,12 @@ export class TrackGroupView extends LitElement {
 
   override render() {
     return html`
-<div
-    class="group"
-    @mousedown=${this.clicked}
-    @dblclick=${this.dblclick}>
+<div class="group">
   <div class="group-head">
     <div
-        class="artwork"
+        class="artwork click-target"
+        @mousedown=${this.clicked}
+        @dblclick=${this.dblclick}
         style=${styleMap({
           'background-image': `url(${this.imageUrl})`,
         })}>
