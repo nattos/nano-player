@@ -1,12 +1,12 @@
-import { app, BrowserWindow } from 'electron';
+import { app, ipcMain, BrowserWindow } from 'electron';
 import * as path from 'path';
-// import './preload';
-// import 'fs';
+
+let mainWindow: BrowserWindow;
 
 const createWindow = () => {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     webPreferences: {
-      // preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
       contextIsolation: false,
     },
@@ -19,15 +19,31 @@ const createWindow = () => {
     mainWindow.loadURL(`http://localhost:4000`);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, './index.html'))
+    mainWindow.loadFile(path.join(__dirname, './index.html'));
     mainWindow.webContents.openDevTools();
   }
+  mainWindow.on('focus', () => { didWindowActiveChange(true); });
+  mainWindow.on('blur', () => { didWindowActiveChange(false); });
 }
 
+let windowIsActive = false;
+
+function didWindowActiveChange(active: boolean) {
+  if (windowIsActive === active) {
+    return;
+  }
+  windowIsActive = active;
+  mainWindow.webContents.send('browserWindow.onDidActiveChange', active);
+}
+
+ipcMain.handle('browserWindow.active', () => windowIsActive);
+
+
+app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 app.whenReady().then(() => {
-  createWindow()
+  createWindow();
 })
 
 app.on('window-all-closed', () => {
-  app.quit()
+  app.quit();
 })

@@ -274,7 +274,12 @@ export class MediaIndexer {
           this.applyGeneratedMetadata(toUpdate);
         };
 
-        const dryRunModifiedTrack = structuredClone(track);
+        // Excise values structuredClone can't handle.
+        const trackShallowClone = utils.merge({}, track);
+        trackShallowClone.fileHandle = undefined;
+
+        // Check if the updater actually changes anything.
+        const dryRunModifiedTrack = structuredClone(trackShallowClone);
         trackUpdaterFunc((path) => path === track.path ? dryRunModifiedTrack : undefined);
         if (utils.isDeepStrictEqual(dryRunModifiedTrack, track)) {
           console.log(`Indexed: ${track.path} (unchanged)`);

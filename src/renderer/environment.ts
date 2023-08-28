@@ -1,4 +1,5 @@
+import { getBrowserWindow } from "./renderer-ipc";
 
 export function isElectron() {
-  return true;
+  return getBrowserWindow() !== undefined;
 }

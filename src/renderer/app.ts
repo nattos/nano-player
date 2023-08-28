@@ -20,6 +20,7 @@ import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands 
 import { Playlist, PlaylistManager } from './playlist-manager';
 import { Selection, SelectionMode } from './selection';
 import { ImageCache } from './ImageCache';
+import { getBrowserWindow } from './renderer-ipc';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -35,6 +36,7 @@ export class NanoApp extends LitElement {
   @query('#player-seekbar') playerSeekbarElement!: HTMLElement;
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track, TrackGroupView, Track>;
   @property() overlay?: Overlay;
+  @property() windowActive = true;
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
   private previewMoveDelta = 0;
@@ -75,6 +77,12 @@ export class NanoApp extends LitElement {
       this.updateSelectionInTrackView();
     });
     makeObservable(this);
+
+    const browserWindow = getBrowserWindow();
+    if (browserWindow) {
+      browserWindow.onDidActiveChange = (active) => this.windowActive = active;
+    }
+
     NanoApp.instance = this;
   }
 
@@ -1603,7 +1611,12 @@ input {
 
   renderInner() {
     return html`
-<div class="outer">
+<div
+    class=${classMap({
+      'outer': true,
+      'window-active': this.windowActive,
+      'window-deactive': !this.windowActive,
+    })}>
   ${this.renderTitleBar()}
   <div class="track-view-area">
     <recycler-view class="track-view" id="track-list-view"></recycler-view>

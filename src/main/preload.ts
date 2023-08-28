@@ -1,16 +1,13 @@
-export const placeholder = 0;
+const { contextBridge, ipcRenderer } = require('electron');
+import { BrowserWindow } from '../ipc';
 
-// All of the Node.js APIs are available in the preload process.
-// It has the same sandbox as a Chrome extension.
-window.addEventListener("DOMContentLoaded", () => {
-  const replaceText = (selector: string, text: string) => {
-    const element = document.getElementById(selector);
-    if (element) {
-      element.innerText = text;
-    }
-  };
+// contextBridge.exposeInMainWorld('browserWindow', {
+//   active: () => ipcRenderer.invoke('browserWindow.active'),
+// })
 
-  for (const type of ["chrome", "node", "electron"]) {
-    replaceText(`${type}-version`, process.versions[type as keyof NodeJS.ProcessVersions] ?? '');
-  }
-});
+const browserWindow: BrowserWindow = {
+  active: () => ipcRenderer.invoke('browserWindow.active') as Promise<boolean>,
+};
+(window as any).browserWindow = browserWindow;
+
+ipcRenderer.on('browserWindow.onDidActiveChange', (event, newState: boolean) => { browserWindow.onDidActiveChange?.(newState); } );
