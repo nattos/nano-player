@@ -10,8 +10,9 @@ const createWindow = () => {
       nodeIntegration: true,
       contextIsolation: false,
     },
-    width: 800,
-    height: 600,
+    width: 940,
+    height: 1024,
+    titleBarStyle: 'hiddenInset',
   })
 
   if (process.env.NODE_ENV === 'development') {

@@ -8,6 +8,7 @@ import { RecyclerView } from './recycler-view';
 import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
 import * as utils from './utils';
 import * as constants from './constants';
+import * as environment from './environment';
 import { TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
@@ -1285,6 +1286,53 @@ export class NanoApp extends LitElement {
   display: flex;
   flex-flow: column;
 }
+.outer.window-deactive {
+}
+
+.window-title-bar {
+  position: relative;
+  height: 36px;
+  width: 100%;
+  user-select: none;
+  -webkit-app-region: drag;
+  color: var(--theme-fg3);
+}
+.window-title-divider {
+  position: absolute;
+  bottom: 0;
+  height: 1px;
+  left: 0;
+  right: 0;
+  background-color: var(--theme-bg2);
+}
+.outer.window-deactive > .window-title-bar {
+  color: var(--theme-fg4);
+}
+.window-title-text-container {
+  --left-inset: max(var(--theme-row-group-head-width), 80px);
+  display: flex;
+  position: absolute;
+  left: var(--left-inset);
+  top: 0px;
+  bottom: 0px;
+  width: fit-content;
+  max-width: calc(100% - var(--left-inset));
+  align-items: center;
+  gap: 1em;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+.window-title-text-part {
+  flex: 1 1 auto;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: var(--theme-letter-spacing-wide);
+  font-size: 85%;
+  overflow: hidden;
+}
+.window-title-text-part:empty {
+  display: none;
+}
 
 .track-view-area {
   flex-grow: 1;
@@ -1406,7 +1454,7 @@ export class NanoApp extends LitElement {
 }
 .player-controls-button-text {
   margin: auto;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--theme-letter-spacing-button);
 }
 
 .query-container {
@@ -1507,7 +1555,7 @@ input {
 
 .query-completion-chip-tag {
   font-size: 40%;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--theme-letter-spacing-wide);
   font-weight: 400;
 }
 
@@ -1556,6 +1604,7 @@ input {
   renderInner() {
     return html`
 <div class="outer">
+  ${this.renderTitleBar()}
   <div class="track-view-area">
     <recycler-view class="track-view" id="track-list-view"></recycler-view>
     ${this.renderQueryOverlay()}
@@ -1602,6 +1651,22 @@ input {
   </div>
 </div>
 `;
+  }
+
+  private renderTitleBar() {
+    if (!environment.isElectron()) {
+      return html``;
+    }
+    return html`
+<div class="window-title-bar">
+  <div class="window-title-text-container">
+    <div class="window-title-text-part">${this.currentPlayTrack?.metadata?.title ?? ''}</div>
+    <div class="window-title-text-part">${this.trackViewCursor?.secondarySource ?? 'library'}</div>
+    <div class="window-title-text-part">nano-player</div>
+  </div>
+  <div class="window-title-divider"></div>
+</div>
+    `;
   }
 
   private renderOverlay() {

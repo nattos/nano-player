@@ -162,7 +162,7 @@ export class TrackView extends LitElement {
 }
 .small-button-text {
   margin: auto;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--theme-letter-spacing-button);
 }
 `;
 

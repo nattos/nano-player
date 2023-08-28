@@ -18,6 +18,8 @@ body {
   --theme-hi-border: var(--theme-color5);
   --theme-row-odd-bg: var(--theme-bg);
   --theme-row-even-bg: var(--theme-bg2);
+  --theme-letter-spacing-wide: 0.05em;
+  --theme-letter-spacing-button: 0.1em;
 
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-weight: 300;
