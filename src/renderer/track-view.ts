@@ -153,7 +153,7 @@ export class TrackView extends LitElement {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--theme-bg);
+  background-color: var(--theme-bg3);
   opacity: 1.0;
   z-index: 1;
 }

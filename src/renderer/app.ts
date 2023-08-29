@@ -8,13 +8,14 @@ import { RecyclerView } from './recycler-view';
 import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
 import * as utils from '../utils';
 import * as constants from './constants';
+import * as fileUtils from './file-utils';
 import * as environment from './environment';
 import { TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
 import { Track } from './schema';
-import { Database, ListPrimarySource, ListSource, SearchResultStatus, SortContext } from './database';
+import { Database, ListPrimarySource, ListSource, ResolvedSubpathInLibraryPath, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
 import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
@@ -27,6 +28,13 @@ RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
 enum Overlay {
   AlbumArt = 'album-art',
+  DragDropAccept = 'drag-drop-accept',
+}
+
+enum DragDropState {
+  NotStarted,
+  Success,
+  Failure,
 }
 
 @customElement('nano-app')
@@ -39,6 +47,8 @@ export class NanoApp extends LitElement {
   @query('#track-list-view') trackListView!: RecyclerView<TrackView, Track, TrackGroupView, Track>;
   @property() overlay?: Overlay;
   @property() windowActive = true;
+  @observable dragDropState = DragDropState.NotStarted
+
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
   private previewMoveDelta = 0;
@@ -127,6 +137,9 @@ export class NanoApp extends LitElement {
       window.addEventListener('keydown', this.onWindowKeydown.bind(this));
       window.addEventListener('keypress', this.onWindowKeypress.bind(this));
       window.addEventListener('contextmenu', this.onWindowRightClick.bind(this));
+      window.addEventListener('drop', this.doDragDropDrop.bind(this));
+      window.addEventListener('dragover', this.doDragDropDragOver.bind(this));
+      window.addEventListener('dragleave', this.doDragDropDragLeave.bind(this));
     });
   }
 
@@ -446,6 +459,158 @@ export class NanoApp extends LitElement {
     e.preventDefault();
     e.stopPropagation();
     this.doToggleQueryInputField(undefined, '');
+  }
+
+  private isInDragDrop = false;
+
+  @action
+  private async doDragDropDrop(e: DragEvent) {
+    if (this.isInDragDrop) {
+      this.overlay = Overlay.DragDropAccept;
+      this.isInDragDrop = false;
+      this.dragDropState = DragDropState.NotStarted;
+      setTimeout(() => {
+        if (this.overlay === Overlay.DragDropAccept) {
+          this.overlay = undefined;
+        }
+      }, 1200);
+    }
+
+    try {
+      let hadFile = false;
+      if (!e.dataTransfer?.files) {
+        return;
+      }
+      const files: DataTransferItem[] = [];
+      for (const item of e.dataTransfer?.items) {
+        if (item.kind !== 'file') {
+          continue;
+        }
+        files.push(item);
+        hadFile = true;
+      }
+      if (hadFile) {
+        e.preventDefault();
+      } else {
+      }
+
+      // TODO: Deal with API.
+      const fileHandles = await Promise.all(files.map(file => (file as any).getAsFileSystemHandle() as Promise<FileSystemHandle>));
+      for (const fileHandle of fileHandles) {
+        console.log(fileHandle);
+      }
+
+      const source = this.resolveSource(this.trackViewCursor!.source);
+      if (source.source === ListPrimarySource.Playlist) {
+        const playlist = source.secondary ? await PlaylistManager.instance.getPlaylist(source.secondary) : undefined;
+        if (!playlist) {
+          throw new Error('Current playlist not found.');
+        }
+
+        const resolvedPaths = await Promise.all(fileHandles.map(handle => Database.instance.resolveInLibraryPaths(handle)));
+        if (resolvedPaths.some(entry => !entry.libraryPath || !entry.subpath)) {
+          throw new Error('Not all paths could be resolved in library.');
+        }
+        const allPathPromises = resolvedPaths.map(async (resolvedPath) => {
+          if (resolvedPath.handle.kind === 'directory') {
+            const directory = resolvedPath.handle as FileSystemDirectoryHandle;
+            const directoryHandle = resolvedPath.handle as FileSystemDirectoryHandle;
+            const resultPaths: string[] = [];
+            for await (const subfile of fileUtils.enumerateFilesRec(directoryHandle)) {
+              const subpath = await directory.resolve(subfile);
+              if (!subpath) {
+                continue;
+              }
+              resultPaths.push(Database.makePath(resolvedPath.libraryPath!.path, resolvedPath.subpath!.concat(subpath)));
+            }
+            return resultPaths;
+          } else {
+            return [Database.makePath(resolvedPath.libraryPath!.path, resolvedPath.subpath!)];
+          }
+        });
+        const allPathsToAdd: string[] = Array.from(utils.mapAll(await Promise.all(allPathPromises), (paths) => paths));
+
+        await PlaylistManager.instance.updatePlaylist(playlist.key, playlist.entryPaths.concat(allPathsToAdd));
+        // Ensure paths actually exist.
+        for (const pathToAdd of utils.filterUnique(allPathsToAdd)) {
+          MediaIndexer.instance.updateMetadataForPath(pathToAdd);
+        }
+      } else {
+        const resolvedPaths = await Promise.all(fileHandles.map(handle => Database.instance.resolveInLibraryPaths(handle)));
+        const toAdds = [];
+        for (const resolvedPath of resolvedPaths) {
+          if (resolvedPath.handle.kind === 'file') {
+            console.log(`${resolvedPath.handle.name} is a loose file. Ephemeral files not supported yet.`);
+            continue;
+          }
+          const handle = resolvedPath.handle as FileSystemDirectoryHandle;
+          if (!resolvedPath.libraryPath || !resolvedPath.subpath) {
+            toAdds.push({
+              newLibraryPathFromHandle: handle,
+            });
+            continue;
+          }
+          const subpath = resolvedPath.subpath.join('/');
+          if (resolvedPath.libraryPath.indexedSubpaths.some(indexed => subpath.startsWith(indexed))) {
+            console.log(`${handle.name} already in library.`);
+            continue;
+          }
+          toAdds.push({
+            toLibraryPath: resolvedPath.libraryPath,
+            subpath: subpath,
+          });
+        }
+        if (toAdds.length === 0) {
+          throw new Error('No files updated.');
+        }
+        for (const toAdd of toAdds) {
+          if (toAdd.newLibraryPathFromHandle) {
+            console.log(`Adding ${toAdd.newLibraryPathFromHandle.name} as new indexed library path.`);
+            const newLibraryPath = await Database.instance.addLibraryPath(toAdd.newLibraryPathFromHandle);
+            await Database.instance.setLibraryPathIndexedSubpaths(newLibraryPath.path, ['']);
+            MediaIndexer.instance.queueFileHandle(toAdd.newLibraryPathFromHandle);
+          } else {
+            console.log(`Adding ${toAdd.subpath} as new indexed subpath of ${toAdd.toLibraryPath.path}.`);
+            // Fetch the latest incase multiple subpaths are added to the same library path.
+            const updatedLibraryPath = Database.instance.findLibraryPath(toAdd.toLibraryPath.path);
+            await Database.instance.setLibraryPathIndexedSubpaths(updatedLibraryPath!.path, updatedLibraryPath!.indexedSubpaths.concat(toAdd.subpath));
+
+            (async () => {
+              // TODO: Centralize permission handling.
+              // TODO: Deal with API.
+              const permissionResult = await (updatedLibraryPath!.directoryHandle! as any)?.requestPermission();
+              if (permissionResult === 'granted') {
+                MediaIndexer.instance.queueFileHandle(updatedLibraryPath!.directoryHandle!, toAdd.subpath);
+              }
+            })();
+          }
+        }
+      }
+
+      this.dragDropState = DragDropState.Success;
+    } catch (e) {
+      console.log(e);
+      this.dragDropState = DragDropState.Failure;
+    }
+  }
+
+  @action
+  private doDragDropDragOver(e: DragEvent) {
+    if (e.dataTransfer?.files) {
+      e.preventDefault();
+      // TODO: Consider making overlay stack.
+      this.overlay = Overlay.DragDropAccept;
+      this.isInDragDrop = true;
+      this.dragDropState = DragDropState.NotStarted;
+    }
+  }
+
+  @action
+  private doDragDropDragLeave(e: DragEvent) {
+    // TODO: Consider making overlay stack.
+    this.overlay = undefined;
+    this.isInDragDrop = false;
+    this.dragDropState = DragDropState.NotStarted;
   }
 
   @observable isPlaying = false;
@@ -1590,7 +1755,7 @@ input {
   right: 0;
   bottom: 0;
   background-color: var(--theme-bg4);
-  opacity: 0.5;
+  opacity: 0.66;
   user-select: none;
   pointer-events: auto;
 }
@@ -1615,6 +1780,19 @@ input {
   pointer-events: auto;
 }
 
+.screaming-headline-text {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: 70%;
+  min-height: 30%;
+  transform: translate(-50%, -50%);
+  font-size: 400%;
+  text-align: center;
+}
+.screaming-headline-text simple-icon {
+  font-size: 200%;
+}
   `;
 
   renderInner() {
@@ -1704,11 +1882,25 @@ input {
         alt=""
         src=${this.currentPlayImageUrl}>
     </img>
+  </div>
+</div>
+`;
+    } else if (this.overlay === Overlay.DragDropAccept) {
+      return html`
+<div class="overlay-container">
+  <div class="overlay-underlay" @click=${this.closeOverlay}></div>
+  <div class="overlay-content">
+    <div class="screaming-headline-text">
+      <div>Drop files to add to ${this.trackViewCursor?.primarySource === ListPrimarySource.Playlist ? 'playlist' : 'library'}</div>
+      <div>
+        <simple-icon icon=${this.dragDropState === DragDropState.Success ? 'check-circle' : this.dragDropState === DragDropState.Failure ? 'exclamation-circle' : 'bolt'}></simple-icon>
+      </div>
     </div>
   </div>
 </div>
 `;
     }
+    return html``;
   }
 
   private renderQueryOverlay() {

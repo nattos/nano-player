@@ -5,6 +5,12 @@ import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
 import * as utils from '../utils';
 import * as constants from './constants';
 
+export interface ResolvedSubpathInLibraryPath {
+  handle: FileSystemHandle;
+  libraryPath?: LibraryPathEntry;
+  subpath?: string[];
+}
+
 export enum ListPrimarySource {
   Auto = 'auto',
   Library = 'library',
@@ -189,6 +195,35 @@ export class Database {
       const libraryPathsTable = tx.objectStore(TableNames.LibraryPaths);
       libraryPathsTable.put(entry);
     });
+  }
+
+  async resolveInLibraryPaths(file: FileSystemHandle): Promise<ResolvedSubpathInLibraryPath> {
+    await this.database;
+    const libraryPaths = Array.from(this.getLibraryPaths());
+    let containedLibraryPath: LibraryPathEntry|null = null;
+    let resolvedLibrarySubpath: string[]|null = null;
+    for (const libraryPath of libraryPaths) {
+      // TODO: Deal with permissions.
+      if (!libraryPath.directoryHandle) {
+        continue;
+      }
+      const resolvedPath = await libraryPath.directoryHandle.resolve(file);
+      if (!resolvedPath) {
+        continue;
+      }
+      containedLibraryPath = libraryPath;
+      resolvedLibrarySubpath = resolvedPath;
+      break;
+    }
+    if (!containedLibraryPath || !resolvedLibrarySubpath) {
+      // Can't handle ephemeral paths yet.
+      return { handle: file };
+    }
+    return {
+      handle: file,
+      libraryPath: containedLibraryPath,
+      subpath: resolvedLibrarySubpath,
+    };
   }
 
   getPlaylists(): PlaylistEntry[] {

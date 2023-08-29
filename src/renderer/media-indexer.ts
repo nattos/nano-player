@@ -2,6 +2,7 @@ import {} from 'lit/html';
 import { Reader as jsmediatagsReader } from 'jsmediatags';
 import * as utils from '../utils';
 import * as constants from './constants';
+import * as fileUtils from './file-utils';
 import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';
 
@@ -117,7 +118,7 @@ export class MediaIndexer {
         // TODO: Handle deletions!
         const [handle, subpath] = await this.toAddQueue.pop();
         const filesIt = handle.kind === 'directory'
-            ? this.enumerateFilesRec(await utils.getSubpathDirectory(handle as FileSystemDirectoryHandle, subpath))
+            ? fileUtils.enumerateFilesRec(await utils.getSubpathDirectory(handle as FileSystemDirectoryHandle, subpath))
             : [handle as FileSystemFileHandle];
         for await (const foundFile of filesIt) {
           console.log(foundFile);
@@ -127,61 +128,18 @@ export class MediaIndexer {
             continue;
           }
 
-          const libraryPaths = Database.instance.getLibraryPaths();
-          let containedLibraryPath: LibraryPathEntry|null = null;
-          let resolvedLibrarySubpath: string[]|null = null;
-          for (const libraryPath of libraryPaths) {
-            // TODO: Deal with permissions.
-            if (!libraryPath.directoryHandle) {
-              continue;
-            }
-            const resolvedPath = await libraryPath.directoryHandle.resolve(foundFile);
-            if (!resolvedPath) {
-              continue;
-            }
-            containedLibraryPath = libraryPath;
-            resolvedLibrarySubpath = resolvedPath;
-            break;
-          }
-          if (!containedLibraryPath || !resolvedLibrarySubpath) {
-            // Can't handle ephemeral paths yet.
+          const resolvedLibraryPath = await Database.instance.resolveInLibraryPaths(foundFile);
+          if (!resolvedLibraryPath.libraryPath || !resolvedLibraryPath.subpath) {
             console.log(`not in library path: ${foundFile}`);
             continue;
           }
-          console.log(`adding: ${foundFile} in ${containedLibraryPath.path}`);
-          flow.produce([foundFile, resolvedLibrarySubpath, containedLibraryPath]);
+          console.log(`adding: ${foundFile} in ${resolvedLibraryPath.libraryPath.path}`);
+          flow.produce([foundFile, resolvedLibraryPath.subpath, resolvedLibraryPath.libraryPath]);
         }
 
         flow.flushProduced();
       } catch (e) {
         console.error(e);
-      }
-    }
-  }
-
-  private enumerateImmediateFiles(directory: FileSystemDirectoryHandle) {
-    // TODO: API not available.
-    return (directory as any).values() as AsyncIterable<FileSystemHandle>;
-  }
-
-  private async* enumerateFilesRec(directory: FileSystemDirectoryHandle|undefined) {
-    if (!directory) {
-      return;
-    }
-    const toVisitQueue = [directory];
-    while (true) {
-      const toVisit = toVisitQueue.pop();
-      if (!toVisit) {
-        break;
-      }
-
-      const children = this.enumerateImmediateFiles(toVisit);
-      for await (const child of children) {
-        if (child.kind === 'directory') {
-          toVisitQueue.push(child as FileSystemDirectoryHandle);
-        } else {
-          yield child as FileSystemFileHandle;
-        }
       }
     }
   }
@@ -228,7 +186,7 @@ export class MediaIndexer {
 
         let coverArtRef: ArtworkRef|undefined = undefined;
         if (containingDirectory) {
-          const allFiles = await utils.arrayFromAsync(this.enumerateImmediateFiles(containingDirectory));
+          const allFiles = await utils.arrayFromAsync(fileUtils.enumerateImmediateFiles(containingDirectory));
           const coverArtFile = allFiles.find(file => constants.COVER_ART_FILE_PATTERN.test(file.name.toLocaleLowerCase()));
           if (coverArtFile) {
             const coverArtFilePath = Database.makePath(sourceKey, [containingDirectoryPath, coverArtFile.name]);
