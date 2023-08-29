@@ -208,7 +208,7 @@ export function multicast<TFunc extends Function>(...handlers: TFunc[]): Multica
 }
 
 export function sleep(delayMillis: number): Promise<void> {
-  return new Promise(resolve => { setInterval(resolve, delayMillis); });
+  return new Promise(resolve => { setTimeout(resolve, delayMillis); });
 }
 
 export function parseIntOr(str: string|undefined, defaultValue?: number) {
