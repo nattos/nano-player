@@ -26,7 +26,7 @@ export interface TrackPeekResult {
 class Canceled {}
 
 export class TrackCursor {
-  private static readonly cachedBlockCount = 64;
+  private static readonly cachedBlockCount = 16;
   private static readonly blockSize = 128;
 
   private sourceField: ListSource;
@@ -242,7 +242,7 @@ export class TrackCursor {
       updateBlocksPromise = undefined;
     } else {
       const updateFunc = () => trackCountPromise().then(async (updatedTrackCount) => {
-        console.log(`fetch ${missingBlocks.length} blocks (cached: ${this.cachedBlocks.size})`);
+        // console.log(`fetch ${missingBlocks.length} blocks (cached: ${this.cachedBlocks.size})`);
         let updatedBlocks = Array.from(regionBlocks);
         let rebasedDelta: number|undefined = undefined;
         if (contextDirty) {

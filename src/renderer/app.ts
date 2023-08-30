@@ -149,6 +149,7 @@ export class NanoApp extends LitElement {
 
   @action
   private doToggleQueryInputField(state?: boolean, initialQuery?: string) {
+    this.overlay = undefined;
     const newState = state ?? !this.queryInputForceShown;
     if (newState === this.queryInputForceShown) {
       return;

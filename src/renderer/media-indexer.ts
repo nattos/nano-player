@@ -233,8 +233,9 @@ export class MediaIndexer {
 
         // Check if the updater actually changes anything.
         const dryRunModifiedTrack = structuredClone(trackShallowClone);
+        dryRunModifiedTrack.fileHandle = undefined;
         trackUpdaterFunc((path) => path === track.path ? dryRunModifiedTrack : undefined);
-        if (utils.isDeepStrictEqual(dryRunModifiedTrack, track)) {
+        if (utils.isDeepStrictEqual(dryRunModifiedTrack, trackShallowClone)) {
           console.log(`Indexed: ${track.path} (unchanged)`);
           continue;
         }
