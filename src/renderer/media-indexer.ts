@@ -42,8 +42,6 @@ export class MediaIndexer {
   private started = false;
   private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<[FileSystemHandle, string]>();
   private readonly toIndexQueue = new utils.AsyncProducerConsumerQueue<string>();
-  private readonly audioElement: HTMLAudioElement = new Audio();
-  private audioMetadataReadResolvable?: utils.Resolvable<AudioMetadataInfo>;
 
   start() {
     if (this.started) {
@@ -53,11 +51,6 @@ export class MediaIndexer {
     for (const i of utils.range(constants.FILE_INDEXER_PARALLEL_COUNT)) {
       this.pathIndexerProc();
     }
-
-    this.audioElement.preload = 'metadata';
-    this.audioElement.addEventListener('error', () => this.audioMetadataReadFailed());
-    this.audioElement.addEventListener('abort', () => this.audioMetadataReadFailed());
-    this.audioElement.addEventListener('loadedmetadata', () => this.audioMetadataReadSucceeded());
   }
 
   queueFileHandle(handle: FileSystemHandle, subpath?: string) {
@@ -147,6 +140,8 @@ export class MediaIndexer {
   private async pathIndexerProc() {
     await Database.instance.waitForLoad();
 
+    const audioMetadataInfoReader = new AudioMetadataInfoReader();
+
     while (true) {
       try {
         const path = await this.toIndexQueue.pop();
@@ -199,7 +194,7 @@ export class MediaIndexer {
           }
         }
 
-        const audioMetadataInfo = await this.readAudioMetadataInfo(file);
+        const audioMetadataInfo = await audioMetadataInfoReader.read(file);
         const duration = audioMetadataInfo?.duration;
 
         const trackNumberParts = tags?.tags?.track?.split('/');
@@ -291,8 +286,21 @@ export class MediaIndexer {
     }
     return tags;
   }
+}
 
-  private async readAudioMetadataInfo(file: File): Promise<AudioMetadataInfo|undefined> {
+
+class AudioMetadataInfoReader {
+  private readonly audioElement: HTMLAudioElement = new Audio();
+  private audioMetadataReadResolvable?: utils.Resolvable<AudioMetadataInfo>;
+
+  constructor() {
+    this.audioElement.preload = 'metadata';
+    this.audioElement.addEventListener('error', () => this.audioMetadataReadFailed());
+    this.audioElement.addEventListener('abort', () => this.audioMetadataReadFailed());
+    this.audioElement.addEventListener('loadedmetadata', () => this.audioMetadataReadSucceeded());
+  }
+
+  async read(file: File): Promise<AudioMetadataInfo|undefined> {
     try {
       await this.audioMetadataReadResolvable?.promise;
     } catch {}

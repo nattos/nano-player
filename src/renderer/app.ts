@@ -850,7 +850,7 @@ export class NanoApp extends LitElement {
       if (updatedResults.rebasedDelta !== undefined) {
         this.updateTrackDataInViewport();
       }
-      const tracks = Array.from(updatedResults.results);
+      const tracks = Array.from(updatedResults.results ?? []);
       const track = tracks.at(0);
       if (track && track.path === this.currentPlayTrack?.path) {
         runInAction(() => {
