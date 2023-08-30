@@ -137,6 +137,10 @@ export class LruCache<TKey, TValue> {
 
   constructor(public readonly maxEntries: number, public readonly evictCallback?: (evicted: TValue) => void) {}
 
+  get size() {
+    return this.values.size;
+  }
+
   entries() {
     return this.values.entries();
   }

@@ -23,6 +23,8 @@ export interface TrackPeekResult {
   updatedResultsPromise: Promise<TrackUpdatedResults>|undefined;
 }
 
+class Canceled {}
+
 export class TrackCursor {
   private static readonly cachedBlockCount = 64;
   private static readonly blockSize = 128;
@@ -37,6 +39,10 @@ export class TrackCursor {
   private readonly cachedBlocks = new utils.LruCache<number, Track[]>(TrackCursor.cachedBlockCount);
   private readonly invalidatedBlocks = new Map<number, Track[]>();
   private readonly fetchesInFlight = new Map<number, Promise<Track[]>>();
+
+  private fetchEpochCanceled = new utils.Resolvable<void>();
+  private fetchPreviousEpochDone = Promise.resolve();
+  private readonly fetchQueue = new utils.OperationQueue();
 
   private cachedPrimarySource: ListPrimarySource;
   private cachedSecondarySource?: string;
@@ -197,7 +203,7 @@ export class TrackCursor {
       }
     }
 
-    let trackCountPromise: Promise<number>;
+    let trackCountPromise: () => Promise<number>;
     if (databaseDirty) {
       trackCountPromise = (async () => {
         let updatedTrackCount = await this.database.countTracks(source);
@@ -220,77 +226,108 @@ export class TrackCursor {
         }
 
         return updatedTrackCount;
-      })();
+      });
     } else {
-      trackCountPromise = Promise.resolve(this.cachedTrackCount);
+      trackCountPromise = () => Promise.resolve(this.cachedTrackCount);
     }
 
-    const updateBlocksPromise = missingBlocks.length <= 0 && !databaseDirty ? undefined : trackCountPromise.then(async (updatedTrackCount) => {
-      let updatedBlocks = Array.from(regionBlocks);
-      let rebasedDelta: number|undefined = undefined;
-      if (databaseDirty) {
-        updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
+    if (databaseDirty) {
+      // Wait for all previous fetches to complete before starting any new fetches.
+      this.fetchEpochCanceled.resolve();
+      this.fetchEpochCanceled = new utils.Resolvable();
+    }
+    const canceledFlag = this.fetchEpochCanceled;
+    let updateBlocksPromise: Promise<TrackUpdatedResults>|undefined;
+    if (missingBlocks.length <= 0 && !databaseDirty) {
+      updateBlocksPromise = undefined;
+    } else {
+      const updateFunc = () => trackCountPromise().then(async (updatedTrackCount) => {
+        console.log(`fetch ${missingBlocks.length} blocks (cached: ${this.cachedBlocks.size})`);
+        let updatedBlocks = Array.from(regionBlocks);
+        let rebasedDelta: number|undefined = undefined;
+        if (contextDirty) {
+          updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
 
-        const useOldAnchor = Number.isFinite(reanchorFromPos);
-        if (reanchorFromPos === Infinity || reanchorFromPos >= this.cachedTrackCount) {
-          reanchorFromPos = this.cachedTrackCount - 1;
+          const useOldAnchor = Number.isFinite(reanchorFromPos);
+          if (reanchorFromPos === Infinity || reanchorFromPos >= this.cachedTrackCount) {
+            reanchorFromPos = this.cachedTrackCount - 1;
+          }
+          if (reanchorFromPos < 0) {
+            reanchorFromPos = 0;
+          }
+          if (useOldAnchor) {
+            reanchorFromPos = Math.max(0, Math.min(this.cachedTrackCount - 1, reanchorFromPos + reanchoredDelta));
+            rebasedDelta = reanchoredDelta;
+          }
+          this.currentIndex = reanchorFromPos;
         }
-        if (reanchorFromPos < 0) {
-          reanchorFromPos = 0;
-        }
-        if (useOldAnchor) {
-          reanchorFromPos = Math.max(0, Math.min(this.cachedTrackCount - 1, reanchorFromPos + reanchoredDelta));
-          rebasedDelta = reanchoredDelta;
-        }
-        this.currentIndex = reanchorFromPos;
-      }
 
-      const startIndex = absolute ? startDelta : (reanchorFromPos + startDelta);
-      const endIndex = absolute ? endDelta : (reanchorFromPos + endDelta);
-      const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
-      const endBlock = TrackCursor.indexToBlock(endIndex);
+        const startIndex = absolute ? startDelta : (reanchorFromPos + startDelta);
+        const endIndex = absolute ? endDelta : (reanchorFromPos + endDelta);
+        const startBlock = Math.max(0, TrackCursor.indexToBlock(startIndex));
+        const endBlock = TrackCursor.indexToBlock(endIndex);
 
-      const fetchPromises = [];
-      let blockIndex = 0;
-      for (let blockToFetch = startBlock; blockToFetch <= endBlock; ++blockToFetch) {
-        const blockToFetchCapture = blockToFetch;
-        let fetch = this.fetchesInFlight.get(blockToFetch);
-        if (fetch === undefined) {
-          fetch = (async () => {
-            const fetchedBlock =
-                await this.database.fetchTracksInRange(
-                    source,
-                    TrackCursor.blockStartIndex(blockToFetchCapture),
-                    TrackCursor.blockEndIndex(blockToFetchCapture));
-            this.cachedBlocks.put(blockToFetchCapture, fetchedBlock);
-            return fetchedBlock;
-          })();
-          this.fetchesInFlight.set(blockToFetch, fetch);
-          fetch.then(() => {
-            this.fetchesInFlight.delete(blockToFetch);
-          });
+        const fetchPromises = [];
+        let blockIndex = 0;
+        if (!canceledFlag.completed) {
+          for (let blockToFetch = startBlock; blockToFetch <= endBlock; ++blockToFetch) {
+            const blockToFetchCapture = blockToFetch;
+            let fetch = this.fetchesInFlight.get(blockToFetch);
+            if (fetch === undefined) {
+              fetch = (async () => {
+                const fetchedBlock =
+                    await this.database.fetchTracksInRange(
+                        source,
+                        TrackCursor.blockStartIndex(blockToFetchCapture),
+                        TrackCursor.blockEndIndex(blockToFetchCapture));
+                this.cachedBlocks.put(blockToFetchCapture, fetchedBlock);
+                return fetchedBlock;
+              })();
+              this.fetchesInFlight.set(blockToFetch, fetch);
+              fetch.then(() => {
+                this.fetchesInFlight.delete(blockToFetch);
+              });
+            }
+            const storeIndex = blockIndex++;
+            fetch.then(fetched => {
+              if (canceledFlag.completed) {
+                return;
+              }
+              updatedBlocks[storeIndex] = fetched;
+            });
+            fetchPromises.push(fetch);
+          }
         }
-        const storeIndex = blockIndex++;
-        fetch.then(fetched => {
-          updatedBlocks[storeIndex] = fetched;
+
+        const allResults = Promise.all(fetchPromises);
+        const resultsOrCanceled = await Promise.race([allResults, canceledFlag.promise.then(() => Canceled)]);
+        if (resultsOrCanceled === Canceled) {
+          console.log('fetch canceled');
+          updatedBlocks = new Array<Track[]|undefined>(updatedBlocks.length);
+        }
+        const generator = this.tracksFromRegionBlocksGenerator(updatedBlocks, startBlock, startIndex, endIndex);
+
+        for (const key of invalidatedBlocks) {
+          this.invalidatedBlocks.delete(key);
+        }
+
+        return utils.upcast<TrackUpdatedResults>({
+          rebasedStartIndex: startIndex,
+          rebasedEndIndex: endIndex,
+          rebasedDelta: rebasedDelta,
+          results: generator,
+          totalCount: updatedTrackCount,
         });
-        fetchPromises.push(fetch);
-      }
-      await Promise.all(fetchPromises);
-      const generator = this.tracksFromRegionBlocksGenerator(updatedBlocks, startBlock, startIndex, endIndex);
-
-      for (const key of invalidatedBlocks) {
-        this.invalidatedBlocks.delete(key);
-      }
-
-      return utils.upcast<TrackUpdatedResults>({
-        rebasedStartIndex: startIndex,
-        rebasedEndIndex: endIndex,
-        rebasedDelta: rebasedDelta,
-        results: generator,
-        totalCount: updatedTrackCount,
       });
-    });
+
+      if (databaseDirty) {
+        // Wait for all previous fetches to complete before starting any new fetches.
+        this.fetchPreviousEpochDone = this.fetchQueue.push(() => { console.log('new epoch') });
+      }
+
+      updateBlocksPromise = this.fetchPreviousEpochDone.then(() => updateFunc());
+      this.fetchQueue.push(() => updateBlocksPromise);
+    }
 
     return {
       contextChanged: contextDirty,
