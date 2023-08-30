@@ -236,7 +236,12 @@ export class NanoApp extends LitElement {
   @action
   private queryAreaKeypress(e: KeyboardEvent) {
     console.log(e);
-    // e.preventDefault();
+    const currentQuery = this.queryInputElement.value;
+    const queryIsDefault = !currentQuery || currentQuery.trim() === 'cmd:';
+    if ((e.key === '/' || e.key === '?') && queryIsDefault) {
+      e.preventDefault();
+      this.doToggleQueryInputField(false);
+    }
     e.stopPropagation();
   }
 
