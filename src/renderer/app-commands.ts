@@ -1,5 +1,6 @@
 import { NanoApp } from "./app";
 import { CommandSpec, CommandParser, CommandResolvedArg } from "./command-parser";
+import { QueryTokenAtom } from "./database";
 import { PlaylistManager } from "./playlist-manager";
 
 export enum CmdSortTypes {
@@ -28,7 +29,7 @@ export enum CmdLibraryCommands {
 function executeSubcommandsFunc(command: CommandSpec, args: CommandResolvedArg[]) {
   for (const arg of args) {
     if (arg.subcommand) {
-      arg.subcommand.command.func(arg.subcommand.command, arg.subcommand.args);
+      arg.subcommand.command.func?.(arg.subcommand.command, arg.subcommand.args);
     }
   }
 }
@@ -314,7 +315,7 @@ export function getCommands(app: NanoApp) {
                   isString: true,
                 }
               ],
-              func: () => {},
+              valueFunc: CommandParser.bindValueFunc(app.searchQueryTokenFromAtomFunc(QueryTokenAtom.Title), app, CommandParser.resolveStringArg()),
             },
             {
               // artist:<artist>
@@ -326,7 +327,7 @@ export function getCommands(app: NanoApp) {
                   isString: true,
                 }
               ],
-              func: () => {},
+              valueFunc: CommandParser.bindValueFunc(app.searchQueryTokenFromAtomFunc(QueryTokenAtom.Artist), app, CommandParser.resolveStringArg()),
             },
             {
               // genre:<genre>
@@ -338,7 +339,7 @@ export function getCommands(app: NanoApp) {
                   isString: true,
                 }
               ],
-              func: () => {},
+              valueFunc: CommandParser.bindValueFunc(app.searchQueryTokenFromAtomFunc(QueryTokenAtom.Genre), app, CommandParser.resolveStringArg()),
             },
             {
               // album:<album>
@@ -350,7 +351,7 @@ export function getCommands(app: NanoApp) {
                   isString: true,
                 }
               ],
-              func: () => {},
+              valueFunc: CommandParser.bindValueFunc(app.searchQueryTokenFromAtomFunc(QueryTokenAtom.Album), app, CommandParser.resolveStringArg()),
             },
             {
               // path:<path>
@@ -362,7 +363,7 @@ export function getCommands(app: NanoApp) {
                   isString: true,
                 }
               ],
-              func: () => {},
+              valueFunc: CommandParser.bindValueFunc(app.searchQueryTokenFromAtomFunc(QueryTokenAtom.Path), app, CommandParser.resolveStringArg()),
             },
           ],
         },

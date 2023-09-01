@@ -10,7 +10,8 @@ export interface CommandSpec {
   canExitAtomContext?: boolean;
   executeOnAutoComplete?: boolean;
   argSpec: CommandArgSpec[];
-  func: CommandFunc;
+  func?: CommandFunc;
+  valueFunc?: CommandValueFunc;
   beginPreviewFunc?: CommandFunc;
   cancelPreviewFunc?: CommandFunc;
   chipLabelFunc?: CommandChipLabelFunc;
@@ -36,6 +37,7 @@ export interface CandidateCompletion {
 }
 
 export type CommandFunc = (command: CommandSpec, args: CommandResolvedArg[]) => void;
+export type CommandValueFunc = (command: CommandSpec, args: CommandResolvedArg[]) => any;
 export type CommandChipLabelFunc = (command: CommandSpec, args: CommandResolvedArg[]) => string|undefined;
 
 export interface CommandResolvedArg {
@@ -75,7 +77,7 @@ export class CommandParser {
     }
     for (const executeFunc of executeFuncs) {
       if (executeFunc.forCommand && executeFunc.resolvedArgs) {
-        executeFunc.forCommand.func(executeFunc.forCommand, executeFunc.resolvedArgs);
+        executeFunc.forCommand.func?.(executeFunc.forCommand, executeFunc.resolvedArgs);
       }
     }
     return true;
@@ -243,9 +245,9 @@ export class CommandParser {
           }
         }
         if (arg.isString && !isMatch) {
-          if (rest.length > 0) {
+          if (token.length > 0) {
             // console.log(`Matched string arg ${token}`);
-            resolvedArgs.push({ stringValue: rest });
+            resolvedArgs.push({ stringValue: token });
             isMatch = true;
           } else {
             if (!candidateCompletionsSet.has('<string>')) {
@@ -330,6 +332,23 @@ export class CommandParser {
         resolvedArgs.push(resolved);
       }
       thisBoundFunc(...resolvedArgs);
+    };
+  }
+
+  public static bindValueFunc(func: Function, thisValue: object, ...resolvers: CommandArgResolverFunc[]): CommandValueFunc {
+    const thisBoundFunc = func.bind(thisValue);
+    return (command: CommandSpec, args: CommandResolvedArg[]) => {
+      if (resolvers.length > args.length) {
+        throw Error(`Expected ${resolvers.length} args but got ${args.length}.`);
+      }
+      const resolvedArgs: any[] = [];
+      for (let i = 0; i < resolvers.length; ++i) {
+        const resolver = resolvers[i];
+        const arg = args[i];
+        const resolved = resolver(arg);
+        resolvedArgs.push(resolved);
+      }
+      return thisBoundFunc(...resolvedArgs);
     };
   }
 

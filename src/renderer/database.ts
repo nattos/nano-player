@@ -24,6 +24,19 @@ export interface ListSource {
   sortContext?: SortContext;
 }
 
+export enum QueryTokenAtom {
+  Title = 'title',
+  Artist = 'artist',
+  Album = 'album',
+  Genre = 'genre',
+  Path = 'path',
+}
+
+export interface QueryToken {
+  text: string;
+  atom?: QueryTokenAtom;
+}
+
 export type TrackUpdaterFunc = (trackGetter: (path: string) => Track|undefined) => PromiseLike<void>|void;
 
 class Canceled {}
@@ -100,7 +113,7 @@ export class Database {
   private readonly database: Promise<IDBPDatabase>;
   private readonly updateTrackTables: string[];
 
-  private nextSearchQuery: string[] = [];
+  private nextSearchQuery: QueryToken[] = [];
   private nextSearchQueryDirty = false;
   private searchQueryUpdateInFlight = Promise.resolve();
   private searchQueryUpdateCancel = new utils.Resolvable<void>();
@@ -589,7 +602,7 @@ export class Database {
     }
   }
 
-  setSearchQuery(query: string[]) {
+  setSearchQuery(query: QueryToken[]) {
     if (utils.isDeepStrictEqual(this.nextSearchQuery, query)) {
       return;
     }
@@ -609,11 +622,15 @@ export class Database {
     })();
   }
 
-  private canonicalizeQuery(query: string[]): string[] {
-    return query.map(token => token.trim().toLocaleLowerCase()).filter(token => token.length > 0);
+  private canonicalizeQuery(query: QueryToken[]): QueryToken[] {
+    return query.map(token => {
+      const copy = structuredClone(token);
+      copy.text = copy.text.trim().toLocaleLowerCase();
+      return copy;
+    }).filter(token => token.text.length > 0);
   }
 
-  private async updateSearchTable(queryTokens: string[], cancelFlag: utils.Resolvable<void>) {
+  private async updateSearchTable(queryTokens: QueryToken[], cancelFlag: utils.Resolvable<void>) {
     try {
       return await this.updateSearchTableInner(queryTokens, cancelFlag);
     } catch (e) {
@@ -626,7 +643,7 @@ export class Database {
     }
   }
 
-  private async updateSearchTableInner(queryTokens: string[], cancelFlag: utils.Resolvable<void>) {
+  private async updateSearchTableInner(queryTokens: QueryToken[], cancelFlag: utils.Resolvable<void>) {
     const searchTableName = Database.getNextSearchTable(this.currentSearchTable);
 
     const canceledPromise = cancelFlag.promise.then(() => Canceled);
@@ -652,17 +669,40 @@ export class Database {
     let bestCount = 0;
     let bestCursorFunc = undefined;
     for (const queryToken of queryTokens) {
-      if (queryToken.length < minPrefixLength) {
+      if (queryToken.text.length < minPrefixLength) {
         continue;
       }
-      let prefixLength = Math.min(maxPrefixLength, queryToken.length);
+      let prefixLength = Math.min(maxPrefixLength, queryToken.text.length);
       if (!constants.INDEXED_PREFIX_LENGTHS.includes(prefixLength)) {
         prefixLength = constants.INDEXED_PREFIX_LENGTHS.reduce((a, b) => b >= prefixLength ? a : b > a ? b : a, minPrefixLength);
       }
 
-      const queryPrefix = queryToken.slice(0, prefixLength);
+      const queryPrefix = queryToken.text.slice(0, prefixLength);
 
-      const prefixTableName = Database.getPrefixIndexName(QueryTokenContext.All, prefixLength);
+      let tokenContext: QueryTokenContext;
+      switch (queryToken.atom) {
+        case QueryTokenAtom.Title:
+          tokenContext = QueryTokenContext.Title;
+          break;
+        case QueryTokenAtom.Artist:
+          tokenContext = QueryTokenContext.Artist;
+          break;
+        case QueryTokenAtom.Album:
+          tokenContext = QueryTokenContext.Album;
+          break;
+        case QueryTokenAtom.Genre:
+          tokenContext = QueryTokenContext.Genre;
+          break;
+        case QueryTokenAtom.Path:
+          // TODO: Fix.
+          tokenContext = QueryTokenContext.All;
+          break;
+        default:
+          tokenContext = QueryTokenContext.All;
+          break;
+      }
+
+      const prefixTableName = Database.getPrefixIndexName(tokenContext, prefixLength);
       const prefixTable = tx.objectStore(prefixTableName);
       const prefixesIndex = prefixTable.index(IndexNames.Prefixes);
       const foundCount = await orThrowCanceled(prefixesIndex.count(IDBKeyRange.only(queryPrefix)));
@@ -738,16 +778,46 @@ export class Database {
     }
   }
 
-  private queryMatchesTrack(queryTokens: string[], track: Track) {
+  private queryMatchesTrack(queryTokens: QueryToken[], track: Track) {
     const path = Database.getPathFilePath(track.path).toLocaleLowerCase();
-    return queryTokens.every(token =>
-        path.includes(token) ||
-        track.metadata?.title?.toLocaleLowerCase()?.includes(token) ||
-        track.metadata?.artist?.toLocaleLowerCase()?.includes(token) ||
-        track.metadata?.album?.toLocaleLowerCase()?.includes(token) ||
-        track.metadata?.genre?.toLocaleLowerCase()?.includes(token) ||
-        false
-    );
+    const title = track.metadata?.title?.toLocaleLowerCase();
+    const artist = track.metadata?.artist?.toLocaleLowerCase();
+    const album = track.metadata?.album?.toLocaleLowerCase();
+    const genre = track.metadata?.genre?.toLocaleLowerCase();
+    for (const queryToken of queryTokens) {
+      const text = queryToken.text;
+      let matches: boolean = false;
+      switch (queryToken.atom) {
+        case QueryTokenAtom.Title:
+          matches = title?.includes(text) ?? false;
+          break;
+        case QueryTokenAtom.Artist:
+          matches = artist?.includes(text) ?? false;
+          break;
+        case QueryTokenAtom.Album:
+          matches = album?.includes(text) ?? false;
+          break;
+        case QueryTokenAtom.Genre:
+          matches = genre?.includes(text) ?? false;
+          break;
+        case QueryTokenAtom.Path:
+          // TODO: Fix.
+          break;
+        default:
+          matches =
+              path.includes(text) ||
+              title?.includes(text) ||
+              artist?.includes(text) ||
+              album?.includes(text) ||
+              genre?.includes(text) ||
+              false;
+          break;
+      }
+      if (!matches) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async openDatabaseAsync() {

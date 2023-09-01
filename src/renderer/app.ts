@@ -15,7 +15,7 @@ import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
 import { Track } from './schema';
-import { Database, ListPrimarySource, ListSource, ResolvedSubpathInLibraryPath, SearchResultStatus, SortContext } from './database';
+import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, ResolvedSubpathInLibraryPath, SearchResultStatus, SortContext } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
 import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
@@ -286,9 +286,9 @@ export class NanoApp extends LitElement {
     this.doToggleQueryInputField(false);
   }
 
-  private searchAcceptedQuery: string[] = [];
-  private searchPreviewQuery: string[] = [];
-  private prevSearchQuery: string[] = [];
+  private searchAcceptedQuery: QueryToken[] = [];
+  private searchPreviewQuery: QueryToken[] = [];
+  private prevSearchQuery: QueryToken[] = [];
   private readonly searchUpdateQueue = new utils.OperationQueue();
 
   @action
@@ -315,7 +315,7 @@ export class NanoApp extends LitElement {
   doSearchBeginPreview(command: CommandSpec, args: CommandResolvedArg[]) {
     const query = this.searchQueryFromArgs(args);
     this.searchPreviewQuery = query;
-    console.log(`do preview: ${query.join(' ')}`);
+    console.log(`do preview: ${this.searchQueryToString(query)}`);
     this.updateDatabaseSearchQuery();
   }
 
@@ -332,8 +332,8 @@ export class NanoApp extends LitElement {
       if (this.searchPreviewQuery.length > 0) {
         nextQuery = this.searchPreviewQuery;
       }
-      const newQueryStr = nextQuery.join(' ');
-      const oldQueryStr = this.prevSearchQuery.join(' ');
+      const newQueryStr = this.searchQueryToString(nextQuery);
+      const oldQueryStr = this.searchQueryToString(this.prevSearchQuery);
       if (newQueryStr === oldQueryStr) {
         return;
       }
@@ -348,8 +348,28 @@ export class NanoApp extends LitElement {
     });
   }
 
-  private searchQueryFromArgs(args: CommandResolvedArg[]): string[] {
-    return Array.from(utils.filterNulllike(args.map(arg => arg.oneofValue ?? arg.stringValue)));
+  private searchQueryFromArgs(args: CommandResolvedArg[]): QueryToken[] {
+    return Array.from(utils.filterNulllike(args.map(arg => {
+      if (arg.subcommand) {
+        const subtoken = arg.subcommand.command.valueFunc?.(arg.subcommand.command, arg.subcommand.args) as QueryToken;
+        if (subtoken) {
+          return subtoken;
+        }
+      }
+      const stringlike = arg.oneofValue ?? arg.stringValue;
+      if (stringlike) {
+        return {text: stringlike};
+      }
+      return undefined;
+    })));
+  }
+
+  private searchQueryToString(queryTokens: QueryToken[]) {
+    return queryTokens.map(token => token.atom ? `${token.atom}:${token.text}` : token.text).join(' ');
+  }
+
+  searchQueryTokenFromAtomFunc(atom: QueryTokenAtom): (text: string) => QueryToken {
+    return (text) => utils.upcast({ text, atom });
   }
 
   @action
