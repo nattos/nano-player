@@ -321,6 +321,15 @@ export async function getSubpathFile(directory: FileSystemDirectoryHandle, subpa
   }
 }
 
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+export function rectContains(rect: DOMRectReadOnly, point: Point2D): boolean {
+  return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+}
+
 export function* mapAll<TIn, TOut>(values: Iterable<TIn>, callback: (value: TIn) => Iterable<TOut>|undefined) {
   for (const value of values) {
     const valueResult = callback(value);

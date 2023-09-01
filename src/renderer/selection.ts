@@ -91,6 +91,10 @@ export class Selection<T> {
     return this.selectedSet.has(index);
   }
 
+  get any(): boolean {
+    return this.selectedSet.size > 0;
+  }
+
   get all(): number[] {
     return Array.from(this.selectedSet);
   }

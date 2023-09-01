@@ -11,6 +11,7 @@ export interface CommandSpec {
   executeOnAutoComplete?: boolean;
   argSpec: CommandArgSpec[];
   func?: CommandFunc;
+  suggestEnabledFunc?: CommandValueFunc;
   valueFunc?: CommandValueFunc;
   beginPreviewFunc?: CommandFunc;
   cancelPreviewFunc?: CommandFunc;
@@ -137,6 +138,7 @@ export class CommandParser {
         let isMatch = false;
         if (arg.subcommands) {
           for (const subcommand of arg.subcommands) {
+            const useCompletions: boolean = subcommand?.suggestEnabledFunc?.(subcommand, []) ?? true;
             if (subcommand.atomPrefix === undefined) {
               isMatch = true;
             } else {
@@ -149,7 +151,7 @@ export class CommandParser {
                   [newHead, rest] = sliceTrimStartAcc(newHead, candidateRest);
                   isMatch = true;
                 }
-              } else {
+              } else if (useCompletions) {
                 if (subcommand.atomPrefix.startsWith(rest)) {
                   if (!candidateCompletionsSet.has(subcommand)) {
                     const [suffixFragment, resultQuery] =

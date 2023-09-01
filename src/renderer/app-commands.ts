@@ -111,6 +111,7 @@ export function getCommands(app: NanoApp) {
               argSpec: [],
               executeOnAutoComplete: true,
               func: app.doPlaySelected.bind(app),
+              suggestEnabledFunc: app.hasSelection.bind(app),
             },
             {
               // cmd:play
@@ -206,6 +207,7 @@ export function getCommands(app: NanoApp) {
                       ],
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistAddSelected, app, CommandParser.resolveStringArg()),
+                      suggestEnabledFunc: app.hasSelection.bind(app),
                     },
                     {
                       // cmd:playlist remove
@@ -215,6 +217,7 @@ export function getCommands(app: NanoApp) {
                       argSpec: [],
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistRemoveSelected, app),
+                      suggestEnabledFunc: app.hasSelection.bind(app),
                     },
                     {
                       // cmd:playlist new <playlist-name>
@@ -253,6 +256,7 @@ export function getCommands(app: NanoApp) {
                       ],
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doPlaylistMoveSelected, app, CommandParser.resolveIntegerArg()),
+                      suggestEnabledFunc: app.hasSelection.bind(app),
                     },
                     {
                       // cmd:playlist show <playlist-name>
@@ -271,6 +275,77 @@ export function getCommands(app: NanoApp) {
               cancelPreviewFunc: cancelPreviewSubcommandsFunc,
               chipLabelFunc: chipLabelSubcommandsFunc,
             },
+            {
+              // cmd:selection ...
+              name: 'Current selection',
+              desc: 'Performs operations on current selection.',
+              atomPrefix: 'selection',
+              suggestEnabledFunc: app.hasSelection.bind(app),
+              executeOnAutoComplete: true,
+              argSpec: [
+                {
+                  subcommands: [
+                    {
+                      // cmd:selection play
+                      name: 'Play selected',
+                      desc: 'Plays selected track.',
+                      atomPrefix: 'play',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: app.doPlaySelected.bind(app),
+                    },
+                    {
+                      // cmd:selection add-to <playlist-name>
+                      name: 'Add to playlist',
+                      desc: 'Add selected tracks to a playlist',
+                      atomPrefix: 'add-to',
+                      argSpec: [
+                        {
+                          oneofProvider: playlistNameProvider,
+                        },
+                      ],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doPlaylistAddSelected, app, CommandParser.resolveStringArg()),
+                    },
+                    {
+                      // cmd:selection remove
+                      name: 'Remove from playlist',
+                      desc: 'Remove selected tracks from the current playlist',
+                      atomPrefix: 'remove',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doPlaylistRemoveSelected, app),
+                      suggestEnabledFunc: app.isPlaylistContext.bind(app),
+                    },
+                    {
+                      // cmd:selection move <delta>
+                      name: 'Move',
+                      desc: 'Changes the order of the selected tracks, moving them by an offset',
+                      atomPrefix: 'move',
+                      argSpec: [
+                        {
+                          isNumber: true,
+                        },
+                      ],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doPlaylistMoveSelected, app, CommandParser.resolveIntegerArg()),
+                      suggestEnabledFunc: app.isPlaylistContext.bind(app),
+                    },
+                    // cmd:selection play-after
+                    // cmd:selection sort
+                    // cmd:selection reindex
+                    // cmd:selection info
+                    // cmd:selection convert
+                    // cmd:selection search-similar
+                  ],
+                },
+              ],
+              func: executeSubcommandsFunc,
+              beginPreviewFunc: beginPreviewSubcommandsFunc,
+              cancelPreviewFunc: cancelPreviewSubcommandsFunc,
+              chipLabelFunc: chipLabelSubcommandsFunc,
+            },
+            // TODO: cmd:play-after
             // TODO: cmd:stop-after
             // TODO: cmd:repeat <none|playlist|one|selected>
           ],

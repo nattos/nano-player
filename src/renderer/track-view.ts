@@ -15,6 +15,7 @@ export interface TrackViewHost {
   doPreviewMove(trackView: TrackView, delta: number): void;
   doAcceptMove(trackView: TrackView): void;
   doCancelMove(trackView: TrackView): void;
+  doContextMenu(trackView: TrackView): void;
 }
 
 interface ExtendedMetadata {
@@ -205,6 +206,13 @@ export class TrackView extends LitElement {
   }
 
   @action
+  onContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.host?.doContextMenu(this);
+  }
+
+  @action
   doMoveUp(e: MouseEvent) {
     if (e.button !== 0) {
       return;
@@ -266,7 +274,8 @@ export class TrackView extends LitElement {
       'highlighted': this.highlighted,
     })}
     @mousedown=${this.clicked}
-    @dblclick=${this.dblclick}>
+    @dblclick=${this.dblclick}
+    @contextmenu=${this.onContextMenu}>
   <div class="col-index">${this.playing ? '_' : ''}${this.index}</div>
   <div class="col-title">${this.track?.metadata?.title}</div>
   <div class="col-duration">${utils.formatDuration(this.track?.metadata?.duration)}</div>

@@ -77,6 +77,7 @@ export class NanoApp extends LitElement {
       doPreviewMove: action(this.doMoveTrackPreviewMove.bind(this)),
       doAcceptMove: action(this.doMoveTrackAcceptMove.bind(this)),
       doCancelMove: action(this.clearMoveTracksPreview.bind(this)),
+      doContextMenu: action(this.onContextMenuTrackView.bind(this)),
     };
     this.trackGroupViewHost = {
       doPlayTrackGroupView(groupView) {
@@ -481,10 +482,20 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  private onWindowRightClick(e: Event) {
+  private onWindowRightClick(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     this.doToggleQueryInputField(undefined, '');
+  }
+
+  @action
+  private onContextMenuTrackView(trackView: TrackView) {
+    this.selection.select(trackView.index, trackView.track, SelectionMode.SetPrimary);
+    if (trackView.selected) {
+      this.doToggleQueryInputField(undefined, 'cmd:selection ');
+    } else {
+      this.doToggleQueryInputField(undefined, '');
+    }
   }
 
   private isInDragDrop = false;
@@ -686,6 +697,10 @@ export class NanoApp extends LitElement {
     newIndex = Math.max(0, Math.min(this.trackViewCursor!.trackCount - 1, newIndex));
     this.selection.select(newIndex, undefined, mode);
     this.trackListView.ensureVisible(newIndex, constants.ENSURE_VISIBLE_PADDING);
+  }
+
+  hasSelection(): boolean {
+    return this.selection.any;
   }
 
   @action
@@ -1042,6 +1057,10 @@ export class NanoApp extends LitElement {
         MediaIndexer.instance.queueFileHandle(libraryPath.directoryHandle, subpath);
       }
     }
+  }
+
+  isPlaylistContext(): boolean {
+    return this.trackViewCursor!.primarySource === ListPrimarySource.Playlist;
   }
 
   @action
