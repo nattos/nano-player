@@ -1,6 +1,6 @@
 import { IDBPDatabase, IDBPObjectStore, IDBPTransaction, deleteDB, openDB } from "idb";
-import { observable, makeObservable, action, runInAction } from "mobx";
-import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry } from "./schema";
+import { observable, makeObservable, action, runInAction, observe } from "mobx";
+import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry, Preferences, UserPreferences, PreferencesKey, PlayerPreferences, SortContext } from "./schema";
 import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
 import * as utils from '../utils';
 import * as constants from './constants';
@@ -66,14 +66,6 @@ export enum SearchResultStatus {
 
 export enum QueryTokenContext {
   All = 'all',
-  Title = 'title',
-  Artist = 'artist',
-  Album = 'album',
-  Genre = 'genre',
-  Index = 'index',
-}
-
-export enum SortContext {
   Title = 'title',
   Artist = 'artist',
   Album = 'album',
@@ -155,6 +147,30 @@ export class Database {
 
   async waitForLoad() {
     await this.database;
+    await this.userPreferencesSyncer.waitForLoad();
+  }
+
+  async getRawDatabase() {
+    return await this.database;
+  }
+
+  private playerPreferencesSyncer = new ObservablePreferences(this, () => utils.upcast<PlayerPreferences>({
+    key: PreferencesKey.Player,
+    lastPlayedLocation: {
+      playlistKey: null,
+      sortContext: null,
+      index: null,
+    },
+  }));
+  get playerPreferences(): PlayerPreferences {
+    return this.playerPreferencesSyncer.asObservable;
+  }
+
+  private userPreferencesSyncer = new ObservablePreferences(this, () => utils.upcast<UserPreferences>({
+    key: PreferencesKey.User,
+  }));
+  get userPreferences(): UserPreferences {
+    return this.userPreferencesSyncer.asObservable;
   }
 
   findLibraryPath(sourceKey: string): LibraryPathEntry|undefined {
@@ -956,3 +972,59 @@ export class Database {
     }
   }
 }
+
+export class ObservablePreferences<T extends Preferences> {
+  private readonly preferencesKey;
+  private readonly observableValue;
+  private changeEpoch = 0;
+  private readonly opQueue = new utils.OperationQueue();
+  private readonly loaded =  new utils.Resolvable<void>();
+
+  get asObservable(): T {
+    return this.observableValue;
+  }
+
+  async waitForLoad() {
+    await this.loaded.promise;
+  }
+
+  constructor(readonly database: Database, readonly defaultValueConstructor: () => T) {
+    const defaultValue = defaultValueConstructor();
+    this.preferencesKey = defaultValue.key;
+    this.observableValue = observable(defaultValue);
+    this.opQueue.push(async () => {
+      // Read from database.
+      const database = await this.database.getRawDatabase();
+      const tx = database.transaction(TableNames.Preferences, 'readonly');
+      const prefsTable = tx.objectStore(TableNames.Preferences);
+      const toMerge = await prefsTable.get(this.preferencesKey) as T;
+      if (toMerge) {
+        utils.mergeRec(this.observableValue, toMerge);
+      }
+      this.loaded.resolve();
+    });
+    observe(this.observableValue, () => {
+      this.queueSyncOperation();
+    });
+  }
+
+  private queueSyncOperation() {
+    const thisEpoch = ++this.changeEpoch;
+    this.opQueue.push(async () => {
+      if (thisEpoch !== this.changeEpoch) {
+        return;
+      }
+      // TODO: Deep merge.
+      const toWrite = utils.mergeRec(this.defaultValueConstructor(), this.observableValue);
+      console.log(`Prefs write: ${JSON.stringify(toWrite)}`);
+      const database = await this.database.getRawDatabase();
+      toWrite.key = this.preferencesKey;
+      const tx = database.transaction(TableNames.Preferences, 'readwrite');
+      const prefsTable = tx.objectStore(TableNames.Preferences);
+      await prefsTable.put(toWrite);
+      tx.commit();
+      await tx.done;
+    });
+  }
+}
+

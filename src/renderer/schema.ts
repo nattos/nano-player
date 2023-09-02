@@ -57,3 +57,35 @@ export interface PlaylistEntry {
   key: string;
   name: string;
 }
+
+export enum SortContext {
+  Title = 'title',
+  Artist = 'artist',
+  Album = 'album',
+  Genre = 'genre',
+  Index = 'index',
+}
+
+export interface LibraryLocation {
+  playlistKey: string|null;
+  sortContext: SortContext|null,
+  index: number|null;
+}
+
+export interface Preferences {
+  key: string;
+}
+
+export enum PreferencesKey {
+  User = 'user',
+  Player = 'player',
+}
+
+export interface PlayerPreferences extends Preferences {
+  key: PreferencesKey.Player,
+  lastPlayedLocation: LibraryLocation;
+}
+
+export interface UserPreferences extends Preferences {
+  key: PreferencesKey.User,
+}

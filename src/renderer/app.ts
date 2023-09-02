@@ -14,8 +14,8 @@ import { TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
-import { Track } from './schema';
-import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, ResolvedSubpathInLibraryPath, SearchResultStatus, SortContext } from './database';
+import { Track, SortContext } from './schema';
+import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, ResolvedSubpathInLibraryPath, SearchResultStatus } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
 import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
@@ -53,14 +53,18 @@ export class NanoApp extends LitElement {
   readonly selection = new Selection<Track>();
   private previewMoveDelta = 0;
   @observable private previewMoveInsertPos: number|null = null;
+  private queuedPlaybackSource?: ListSource;
+  private queuedPlaybackLocation?: number;
   private readonly trackViewHost: TrackViewHost;
   private readonly trackGroupViewHost: TrackGroupViewHost;
+
   readonly commandParser = new CommandParser(getCommands(this));
 
   private readonly audioElement = new Audio();
 
   constructor() {
     super();
+    NanoApp.instance = this;
     const thisCapture = this;
 
     this.audioElement.addEventListener('ended', this.onAudioEnded.bind(this));
@@ -95,8 +99,6 @@ export class NanoApp extends LitElement {
     if (browserWindow) {
       browserWindow.onDidActiveChange = (active) => this.windowActive = active;
     }
-
-    NanoApp.instance = this;
   }
 
   connectedCallback(): void {
@@ -109,7 +111,18 @@ export class NanoApp extends LitElement {
     navigator.mediaSession.setActionHandler('previoustrack', this.doPreviousTrack.bind(this));
     navigator.mediaSession.setActionHandler('nexttrack', this.doNextTrack.bind(this));
 
-    setTimeout(() => {
+    Database.instance.waitForLoad().then(() => {
+      const playerPreferences = Database.instance.playerPreferences;
+      const loadLocation = playerPreferences.lastPlayedLocation;
+      if (loadLocation) {
+        this.queuedPlaybackLocation = loadLocation.index ?? undefined;
+        this.queuedPlaybackSource = {
+          source: loadLocation.playlistKey ? ListPrimarySource.Playlist : ListPrimarySource.Library,
+          secondary: loadLocation.playlistKey ?? undefined,
+          sortContext: loadLocation.sortContext ?? undefined,
+        };
+      }
+
       const updateTracks = () => this.updateTrackDataInViewport();
       observe(Database.instance, 'searchResultsStatus', updateTracks);
       observe(Database.instance, 'searchContextEpoch', updateTracks);
@@ -118,6 +131,12 @@ export class NanoApp extends LitElement {
       observe(this.trackListView, 'viewportMinIndex', updateTracks);
       observe(this.trackListView, 'viewportMaxIndex', updateTracks);
       updateTracks();
+
+      if (this.queuedPlaybackLocation) {
+        const toLoad = this.queuedPlaybackLocation;
+        this.queuedPlaybackLocation = undefined;
+        this.movePlayCursor(0, toLoad, this.resolveCurrentSourceForNewPlayCursor(), environment.isElectron());
+      }
 
       autorun(() => { this.trackListView.insertMarkerPos = this.previewMoveInsertPos ?? undefined; });
 
@@ -679,15 +698,19 @@ export class NanoApp extends LitElement {
   @action
   doPlayTrack(atIndex: number, track: Track|undefined) {
     this.playOpQueue.push(async () => {
-      const fromSource: ListSource = {
-        source: this.trackViewCursor?.primarySource ?? ListPrimarySource.Auto,
-        secondary: this.trackViewPlaylist,
-        sortContext: this.trackViewCursor?.sortContext,
-      };
       // TODO: Verify track matches.
-      await this.movePlayCursor(0, atIndex, fromSource);
+      await this.movePlayCursor(0, atIndex, this.resolveCurrentSourceForNewPlayCursor());
       this.setPlayState(true);
     });
+  }
+
+  private resolveCurrentSourceForNewPlayCursor(): ListSource {
+    const fromSource: ListSource = {
+      source: this.trackViewCursor?.primarySource ?? ListPrimarySource.Auto,
+      secondary: this.trackViewPlaylist,
+      sortContext: this.trackViewCursor?.sortContext,
+    };
+    return fromSource;
   }
 
   @action
@@ -778,7 +801,7 @@ export class NanoApp extends LitElement {
     }
   }
 
-  private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource) {
+  private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource, loadTrack: boolean = true) {
     this.playLastDelta = delta < 0 ? -1 : 1;
 
     let needsInitialSeek = false;
@@ -835,13 +858,21 @@ export class NanoApp extends LitElement {
     }
     runInAction(() => {
       console.log(`currentPlayTrack: ${foundTrack?.path}`);
-      this.currentPlayTrack = foundTrack ?? null;
+      if (loadTrack) {
+        this.currentPlayTrack = foundTrack ?? null;
+      }
       this.currentPlayPlaylist = fromPlaylist ?? null;
       this.currentPlayMoveEpoch++;
-      if (foundTrack) {
+      const trackViewSource = this.resolveSource(this.trackViewCursor!.source);
+      if (foundTrack && trackViewSource.source === resolvedSource.source && trackViewSource.secondary === resolvedSource.secondary) {
         this.selection.select(nextIndex, foundTrack, SelectionMode.SetPrimary);
         this.trackListView.ensureVisible(nextIndex, constants.ENSURE_VISIBLE_PADDING);
       }
+      Database.instance.playerPreferences.lastPlayedLocation = {
+        playlistKey: resolvedSource.secondary ?? null,
+        sortContext: resolvedSource.sortContext ?? null,
+        index: nextIndex,
+      };
       this.cancelAudioSeek();
     });
 
@@ -1254,6 +1285,17 @@ export class NanoApp extends LitElement {
           this.updateTrackDataInViewport();
         });
       });
+    }
+
+    if (this.queuedPlaybackSource) {
+      const loadLocation = this.queuedPlaybackSource;
+      this.queuedPlaybackSource = undefined;
+      if (loadLocation.source === ListPrimarySource.Playlist && loadLocation.secondary) {
+        this.trackViewCursor.primarySource = ListPrimarySource.Playlist;
+        this.trackViewPlaylist = loadLocation.secondary;
+      } else {
+        this.trackViewSortContext = loadLocation.sortContext ?? this.trackViewSortContext;
+      }
     }
 
     const blockSize = constants.LIST_VIEW_PEEK_LOOKAHEAD;

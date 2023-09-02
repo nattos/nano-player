@@ -302,6 +302,7 @@ export function getCommands(app: NanoApp) {
                       argSpec: [
                         {
                           oneofProvider: playlistNameProvider,
+                          isString: true,
                         },
                       ],
                       executeOnAutoComplete: true,

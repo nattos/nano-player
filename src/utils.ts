@@ -1,5 +1,5 @@
 
-export class Resolvable<T> {
+export class Resolvable<T extends any|void> {
   private resolveFunc = (value: T) => {}
   private rejectFunc = (reason?: any) => {}
   private readonly promiseField: Promise<T>;
@@ -439,6 +439,24 @@ export function merge<T1 extends object, T2 extends object>(onto: T1, from: T2):
       throw new Error("merge: 'from' must be an ordinary object");
   }
   Object.keys(from).forEach(key => (onto as any)[key] = (from as any)[key]);
+  return onto as T1 & T2;
+}
+
+export function mergeRec<T1 extends object, T2 extends object>(onto: T1, from: T2): T1 & T2 {
+  if (typeof from !== 'object' || from instanceof Array) {
+    throw new Error('merge: "from" must be an ordinary object');
+  }
+  Object.keys(from).forEach(key => {
+    const ontoValue = (onto as any)[key];
+    const fromValue = (from as any)[key];
+    if (ontoValue === null || fromValue === null) {
+      (onto as any)[key] = fromValue;
+    } else if (typeof ontoValue === 'object' && typeof fromValue === 'object') {
+      mergeRec(ontoValue, fromValue);
+    } else {
+      (onto as any)[key] = fromValue;
+    }
+  });
   return onto as T1 & T2;
 }
 
