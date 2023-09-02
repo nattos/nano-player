@@ -976,6 +976,7 @@ export class Database {
 export class ObservablePreferences<T extends Preferences> {
   private readonly preferencesKey;
   private readonly observableValue;
+  private databaseValue: T;
   private changeEpoch = 0;
   private readonly opQueue = new utils.OperationQueue();
   private readonly loaded =  new utils.Resolvable<void>();
@@ -990,6 +991,7 @@ export class ObservablePreferences<T extends Preferences> {
 
   constructor(readonly database: Database, readonly defaultValueConstructor: () => T) {
     const defaultValue = defaultValueConstructor();
+    this.databaseValue = defaultValue;
     this.preferencesKey = defaultValue.key;
     this.observableValue = observable(defaultValue);
     this.opQueue.push(async () => {
@@ -999,12 +1001,15 @@ export class ObservablePreferences<T extends Preferences> {
       const prefsTable = tx.objectStore(TableNames.Preferences);
       const toMerge = await prefsTable.get(this.preferencesKey) as T;
       if (toMerge) {
-        utils.mergeRec(this.observableValue, toMerge);
+        this.databaseValue = utils.mergeRec(this.defaultValueConstructor(), toMerge);
+        runInAction(() => {
+          utils.mergeRec(this.observableValue, toMerge);
+        });
       }
+      observe(this.observableValue, () => {
+        this.queueSyncOperation();
+      });
       this.loaded.resolve();
-    });
-    observe(this.observableValue, () => {
-      this.queueSyncOperation();
     });
   }
 
@@ -1016,6 +1021,10 @@ export class ObservablePreferences<T extends Preferences> {
       }
       // TODO: Deep merge.
       const toWrite = utils.mergeRec(this.defaultValueConstructor(), this.observableValue);
+      if (utils.isDeepStrictEqual(toWrite, this.databaseValue)) {
+        return;
+      }
+      this.databaseValue = toWrite;
       console.log(`Prefs write: ${JSON.stringify(toWrite)}`);
       const database = await this.database.getRawDatabase();
       toWrite.key = this.preferencesKey;
