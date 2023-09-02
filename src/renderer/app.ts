@@ -463,6 +463,10 @@ export class NanoApp extends LitElement {
       this.doMoveSelection(-1, e.shiftKey ? SelectionMode.SelectToRange : SelectionMode.Select);
     } else if (e.key === 'ArrowDown') {
       this.doMoveSelection(1, e.shiftKey ? SelectionMode.SelectToRange : SelectionMode.Select);
+    } else if (e.key === 'ArrowLeft') {
+      this.shiftPlayPosition(-5.00);
+    } else if (e.key === 'ArrowRight') {
+      this.shiftPlayPosition(5.00);
     } else {
       captured = false;
     }
@@ -978,6 +982,17 @@ export class NanoApp extends LitElement {
         this.audioElement.currentTime = pos;
         this.currentPlayProgress = pos;
         this.currentPlayProgressFraction = positionFraction;
+      }
+    });
+  }
+
+  private shiftPlayPosition(deltaSeconds: number) {
+    runInAction(() => {
+      if (this.audioElement.duration > 0) {
+        const pos = this.audioElement.currentTime + deltaSeconds;
+        this.audioElement.currentTime = pos;
+        this.currentPlayProgress = pos;
+        this.currentPlayProgressFraction = pos / this.audioElement.duration;
       }
     });
   }
