@@ -1,7 +1,7 @@
 
 export interface Track {
   path: string;
-  filePath?: string;
+  filePath: string;
   fileHandle?: FileSystemFileHandle;
   metadata?: TrackMetadata;
   generatedMetadata?: GeneratedTrackMetadata;

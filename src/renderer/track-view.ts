@@ -252,7 +252,7 @@ export class TrackView extends LitElement {
   }
 
   private updateExtendedMetadata() {
-    const filePath = Database.getPathFilePath(this.track?.path ?? '');
+    const filePath = this.track?.filePath ?? '';
     this.extendedMetadata.codec = utils.filePathExtension(filePath).toUpperCase();
     const pathParts = filePath.split('/');
     this.extendedMetadata.pathParts = [pathParts?.at(-2) ?? '', pathParts?.at(-3) ?? '', pathParts?.at(-4) ?? ''];

@@ -45,6 +45,7 @@ enum TableNames {
   AllTracks = 'all-tracks',
   LibraryPaths = 'library-paths',
   Playlists = 'playlists',
+  Preferences = 'preferences',
 }
 
 enum SearchTableName {
@@ -587,7 +588,7 @@ export class Database {
         return Array.from(Database.generatePrefixes(str, prefixLength));
       }
 
-      const pathPrefixes = generatePrefixes(Database.getPathFilePath(track.path));
+      const pathPrefixes = generatePrefixes(track.filePath);
       const titlePrefixes = generatePrefixes(track.metadata?.title);
       const artistPrefixes = generatePrefixes(track.metadata?.artist);
       const albumPrefixes = generatePrefixes(track.metadata?.album);
@@ -780,7 +781,7 @@ export class Database {
   }
 
   private queryMatchesTrack(queryTokens: QueryToken[], track: Track) {
-    const path = Database.getPathFilePath(track.path).toLocaleLowerCase();
+    const path = track.filePath.toLocaleLowerCase();
     const title = track.metadata?.title?.toLocaleLowerCase();
     const artist = track.metadata?.artist?.toLocaleLowerCase();
     const album = track.metadata?.album?.toLocaleLowerCase();
@@ -852,6 +853,7 @@ export class Database {
 
       upgradeDb.createObjectStore(TableNames.LibraryPaths, { keyPath: 'path' });
       upgradeDb.createObjectStore(TableNames.Playlists, { keyPath: 'key' });
+      upgradeDb.createObjectStore(TableNames.Preferences, { keyPath: 'key' });
 
       console.log(upgradeDb);
     }})
