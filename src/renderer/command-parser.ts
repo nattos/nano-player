@@ -23,7 +23,7 @@ export interface CommandArgSpec {
   isNumber?: boolean;
   oneof?: string[];
   oneofProvider?: () => string[];
-  subcommands?: CommandSpec[];
+  subcommands?: Array<CommandSpec|undefined>;
   isRepeated?: boolean;
 }
 
@@ -138,6 +138,9 @@ export class CommandParser {
         let isMatch = false;
         if (arg.subcommands) {
           for (const subcommand of arg.subcommands) {
+            if (!subcommand) {
+              continue;
+            }
             const useCompletions: boolean = subcommand?.suggestEnabledFunc?.(subcommand, []) ?? true;
             if (subcommand.atomPrefix === undefined) {
               isMatch = true;

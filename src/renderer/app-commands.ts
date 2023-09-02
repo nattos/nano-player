@@ -2,6 +2,7 @@ import { NanoApp } from "./app";
 import { CommandSpec, CommandParser, CommandResolvedArg } from "./command-parser";
 import { QueryTokenAtom } from "./database";
 import { PlaylistManager } from "./playlist-manager";
+import * as environment from "./environment";
 
 export enum CmdSortTypes {
   Title = 'title',
@@ -332,6 +333,15 @@ export function getCommands(app: NanoApp) {
                       func: CommandParser.bindFunc(app.doPlaylistMoveSelected, app, CommandParser.resolveIntegerArg()),
                       suggestEnabledFunc: app.isPlaylistContext.bind(app),
                     },
+                    ifElectron({
+                      // cmd:selection show-file
+                      name: 'Show file',
+                      desc: 'Shows the file in the default file application',
+                      atomPrefix: 'show-file',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doShowSelectionInFileBrowser, app),
+                    }),
                     // cmd:selection play-after
                     // cmd:selection sort
                     // cmd:selection reindex
@@ -447,4 +457,11 @@ export function getCommands(app: NanoApp) {
     },
   ];
   return commands;
+}
+
+function ifElectron(commandSpec: CommandSpec): CommandSpec|undefined {
+  if (environment.isElectron()) {
+    return commandSpec;
+  }
+  return undefined;
 }

@@ -707,7 +707,7 @@ export class NanoApp extends LitElement {
   private resolveCurrentSourceForNewPlayCursor(): ListSource {
     const fromSource: ListSource = {
       source: this.trackViewCursor?.primarySource ?? ListPrimarySource.Auto,
-      secondary: this.trackViewPlaylist,
+      secondary: this.trackViewPlaylist ?? undefined,
       sortContext: this.trackViewCursor?.sortContext,
     };
     return fromSource;
@@ -781,6 +781,36 @@ export class NanoApp extends LitElement {
     }
   }
 
+  @action
+  async doShowSelectionInFileBrowser() {
+    const index = this.selection.all.at(0);
+    if (index === undefined) {
+      return;
+    }
+    const track = await this.fetchTrack(index);
+    if (!track) {
+      return;
+    }
+    const browserWindow = getBrowserWindow();
+    browserWindow?.showFileInBrowser('/' + track.filePath);
+  }
+
+  // Fetches a single track by index from the track view context.
+  async fetchTrack(index: number): Promise<Track|undefined> {
+    const op = this.trackViewCursor!.peekRegion(index, index, true);
+    let results = op.dirtyResults;
+    if (op.updatedResultsPromise) {
+      results = await op.updatedResultsPromise;
+    }
+    if (results.rebasedStartIndex !== index) {
+      throw new Error('Interrupted.');
+    }
+    for (const track of results.results) {
+      return track;
+    }
+    return undefined;
+  }
+
   private updateAnchorForTrackView() {
     const orderedTrackViews = this.trackListView.elementsInView.sort((a, b) => a.index - b.index);
     const index = Math.floor(orderedTrackViews.length / 2) || 0;
@@ -793,12 +823,20 @@ export class NanoApp extends LitElement {
   private updateSelectionInTrackView() {
     const [primaryIndex, primaryTrack] = this.selection.primary;
     const playIndex = this.playCursor?.anchor?.index;
+    const isPlayingContext = this.isShowingPlayCursorContext();
     for (const trackView of this.trackListView.elementsInView) {
       const index = trackView.index;
       trackView.selected = this.selection.has(index);
       trackView.highlighted = index === primaryIndex;
-      trackView.playing = index === playIndex;
+      trackView.playing = isPlayingContext && index === playIndex;
     }
+  }
+  
+  private isShowingPlayCursorContext(): boolean {
+    const isListViewPlaylist = this.trackViewCursor?.source?.source === ListPrimarySource.Playlist;
+    const isPlayPlaylist = this.playCursor?.source?.source === ListPrimarySource.Playlist;
+    const secondaryMatches = (this.trackViewCursor?.source?.secondary ?? this.trackViewPlaylist ?? undefined) === this.playCursor?.source?.secondary;
+    return isListViewPlaylist === isPlayPlaylist && (!isPlayPlaylist || secondaryMatches);
   }
 
   private async movePlayCursor(delta: number, absPos?: number, fromSource?: ListSource, loadTrack: boolean = true) {
@@ -1067,7 +1105,7 @@ export class NanoApp extends LitElement {
 
   @action
   doLibraryShow() {
-    this.trackViewPlaylist = undefined;
+    this.trackViewPlaylist = null;
     this.trackViewCursor!.primarySource = ListPrimarySource.Auto;
     this.updateTrackDataInViewport();
   }
@@ -1100,10 +1138,12 @@ export class NanoApp extends LitElement {
     if (playlist ===  undefined) {
       return;
     }
-    console.log(playlist.entryPaths.join(', '));
-    this.trackViewPlaylist = playlist.key;
-    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
-    this.updateTrackDataInViewport();
+    runInAction(() => {
+      console.log(playlist.entryPaths.join(', '));
+      this.trackViewPlaylist = playlist.key;
+      this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+      this.updateTrackDataInViewport();
+    });
   }
 
   @action
@@ -1125,15 +1165,8 @@ export class NanoApp extends LitElement {
     const pathPromises: Array<Promise<string>> = [];
     for (const index of this.selection.all) {
       pathPromises.push((async () => {
-        const peek = this.trackViewCursor!.peekRegion(index, index, true);
-        let results = peek.dirtyResults;
-        if (peek.updatedResultsPromise) {
-          results = await peek.updatedResultsPromise;
-        }
-        if (results.rebasedStartIndex !== index) {
-          throw new Error('Interrupted.');
-        }
-        return Array.from(results.results)[0]!.path;
+        const peek = await this.fetchTrack(index);
+        return peek!.path;
       })());
     }
     const paths: string[] = await Promise.all(pathPromises);
@@ -1142,14 +1175,17 @@ export class NanoApp extends LitElement {
 
     console.log(playlist.entryPaths.join(', '));
 
-    this.trackViewPlaylist = playlist.key;
-    this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
-    this.updateTrackDataInViewport();
+    const playlistKey = playlist.key;
+    runInAction(() => {
+      this.trackViewPlaylist = playlistKey;
+      this.trackViewCursor!.primarySource = ListPrimarySource.Playlist;
+      this.updateTrackDataInViewport();
+    });
   }
 
   @action
   async doPlaylistRemoveSelected() {
-    if (this.trackViewPlaylist === undefined) {
+    if (this.trackViewPlaylist === null) {
       return;
     }
     const playlist = await PlaylistManager.instance.getPlaylist(this.trackViewPlaylist);
@@ -1267,7 +1303,7 @@ export class NanoApp extends LitElement {
   private renderIsInRender = false;
   private renderAutorunResult = html``;
 
-  private trackViewPlaylist?: string;
+  @observable trackViewPlaylist: string|null = null;
   private trackViewSortContext = SortContext.Index;
   private trackViewCursor?: TrackCursor;
   @observable.shallow tracksInView: Array<Track|undefined> = [];
@@ -1354,7 +1390,7 @@ export class NanoApp extends LitElement {
       newSource.source = (searchStatus === SearchResultStatus.NoQuery ? ListPrimarySource.Library : ListPrimarySource.Search);
     }
     if (newSource.source === ListPrimarySource.Playlist) {
-      newSource.secondary = newSource.secondary ?? this.trackViewPlaylist;
+      newSource.secondary = newSource.secondary ?? this.trackViewPlaylist ?? undefined;
     }
     return newSource;
   }
@@ -1947,7 +1983,7 @@ input {
 <div class="window-title-bar">
   <div class="window-title-text-container">
     <div class="window-title-text-part">${this.currentPlayTrack?.metadata?.title ?? ''}</div>
-    <div class="window-title-text-part">${this.trackViewCursor?.secondarySource ?? 'library'}</div>
+    <div class="window-title-text-part">${this.trackViewPlaylist ? (PlaylistManager.instance.getPlaylistDirty(this.trackViewPlaylist)?.name ?? 'playlist') : 'library'}</div>
     <div class="window-title-text-part">nano-player</div>
     <div class="window-title-text-part" style="overflow: visible; position: relative; left: -0.75em; display: flex;">
       <simple-icon style="color: inherit; font-size: 18px;" icon=${this.isPlaying ? 'play' : 'bolt'}></simple-icon>
@@ -2047,7 +2083,8 @@ input {
         elementConstructor: () => new TrackView(),
         elementDataSetter: (trackView, index, track) => {
           const playIndex = this.playCursor?.anchor?.index;
-          const isPlaylistContext = this.trackViewCursor?.source?.source === ListPrimarySource.Playlist;
+          const isListViewPlaylist = this.trackViewCursor?.source?.source === ListPrimarySource.Playlist;
+          const isPlayingContext = this.isShowingPlayCursorContext();
 
           trackView.index = index;
           trackView.track = track;
@@ -2056,8 +2093,8 @@ input {
           const [primaryIndex, primaryTrack] = this.selection.primary;
           trackView.selected = this.selection.has(index);
           trackView.highlighted = index === primaryIndex;
-          trackView.playing = index === playIndex;
-          trackView.showReorderControls = isPlaylistContext;
+          trackView.playing = isPlayingContext && index === playIndex;
+          trackView.showReorderControls = isListViewPlaylist;
         },
 
         groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.generatedMetadata?.groupingKey,

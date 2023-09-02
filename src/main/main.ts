@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow } from 'electron';
+import { app, ipcMain, BrowserWindow, shell } from 'electron';
 import settings from 'electron-settings';
 import * as path from 'path';
 import * as utils from '../utils';
@@ -57,6 +57,7 @@ function saveWindowSize() {
 }
 
 ipcMain.handle('browserWindow.active', () => windowIsActive);
+ipcMain.handle('browserWindow.showFileInBrowser', (e, absPath: string) => shell.showItemInFolder(absPath));
 
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');

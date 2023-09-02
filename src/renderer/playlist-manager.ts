@@ -35,6 +35,15 @@ export class PlaylistManager {
     return Array.from(Database.instance.getPlaylists().map(playlist => playlist.name)).sort();
   }
 
+  getPlaylistDirty(key: string): Playlist|undefined {
+    let playlist = this.playlists.get(key);
+    if (playlist !== undefined) {
+      return playlist;
+    }
+    this.getPlaylist(key);
+    return undefined;
+  }
+
   async getPlaylist(key: string): Promise<Playlist|undefined> {
     let playlist = this.playlists.get(key);
     if (playlist !== undefined) {

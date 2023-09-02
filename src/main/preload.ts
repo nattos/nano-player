@@ -7,6 +7,7 @@ import { BrowserWindow } from '../ipc';
 
 const browserWindow: BrowserWindow = {
   active: () => ipcRenderer.invoke('browserWindow.active') as Promise<boolean>,
+  showFileInBrowser: (absPath: string) => ipcRenderer.invoke('browserWindow.showFileInBrowser', absPath),
 };
 (window as any).browserWindow = browserWindow;
 
