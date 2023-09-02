@@ -1,4 +1,5 @@
 const HtmlWebpackPlugin = require("html-webpack-plugin");
+const FilterWarningsPlugin = require('webpack-filter-warnings-plugin');
 const path = require('path');
 
 module.exports = [
@@ -23,7 +24,9 @@ module.exports = [
       extensions: ['.tsx', '.ts', '.js'],
       alias: {
         jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
+        'js-interpreter': 'js-interpreter/lib/js-interpreter.min.js',
       },
+      fallback: { "vm": false },
     },
     externals: {
       'node:fs': 'commonjs2 node:fs'
@@ -38,7 +41,10 @@ module.exports = [
     plugins: [
       new HtmlWebpackPlugin({
           title: '', 
-          template: 'src/renderer/index.html' })
+          template: 'src/renderer/index.html' }),
+      new FilterWarningsPlugin({
+          exclude: [/Critical dependency/]
+      }),
     ],
 
     devServer: {

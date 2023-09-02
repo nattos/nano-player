@@ -2018,7 +2018,7 @@ input {
           trackView.showReorderControls = isPlaylistContext;
         },
 
-        groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.metadata?.album,
+        groupKeyGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex)?.generatedMetadata?.groupingKey,
         groupDataGetter: (index) => this.tracksInView.at(index - this.tracksInViewBaseIndex),
         groupElementConstructor: () => new TrackGroupView(),
         groupElementDataSetter: (groupView, startIndex, endIndex, track) => {

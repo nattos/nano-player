@@ -1,6 +1,7 @@
 
 export interface Track {
   path: string;
+  filePath?: string;
   fileHandle?: FileSystemFileHandle;
   metadata?: TrackMetadata;
   generatedMetadata?: GeneratedTrackMetadata;
@@ -26,6 +27,7 @@ export interface TrackMetadata {
 
 export interface GeneratedTrackMetadata {
   librarySortKey?: string;
+  groupingKey?: string;
 }
 
 export interface ArtSummary {

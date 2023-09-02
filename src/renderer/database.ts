@@ -555,6 +555,7 @@ export class Database {
     if (!oldTrack) {
       return [{
         path: path,
+        filePath: Database.getPathFilePath(path),
         addedDate: Date.now(),
         indexedDate: 0,
         indexedAtLastModifiedDate: 0,
