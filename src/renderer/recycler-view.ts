@@ -314,13 +314,14 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   `;
 
   override render() {
+    const contentHeightStyles = {'height': `${this.rowHeight * this.totalCount + 1}px`};
     return html`
 <div id="scroll-container" class="scroll-container" @scroll=${this.onScroll}>
-  <div id="content-area" class="content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+  <div id="content-area" class="content-area" style=${styleMap(contentHeightStyles)}">
   </div>
-  <div id="group-content-area" class="group-content-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+  <div id="group-content-area" class="group-content-area" style=${styleMap(contentHeightStyles)})}">
   </div>
-  <div id="markers-area" class="markers-area" style=${styleMap({'height': `${this.rowHeight * this.totalCount}px`})}">
+  <div id="markers-area" class="markers-area" style=${styleMap(contentHeightStyles)})}">
   </div>
 </div>
     `;
