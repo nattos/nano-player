@@ -57,6 +57,7 @@ export class NanoApp extends LitElement {
   private queuedPlaybackLocation?: number;
   private readonly trackViewHost: TrackViewHost;
   private readonly trackGroupViewHost: TrackGroupViewHost;
+  @observable private trackViewBottomShadeAlpha = 0.0;
 
   readonly commandParser = new CommandParser(getCommands(this));
 
@@ -1313,6 +1314,13 @@ export class NanoApp extends LitElement {
     return await PlaylistManager.instance.getPlaylist(playlistKey);
   }
 
+  @action
+  private updateViewForScroll(top: number, contentHeight: number, viewportHeight: number) {
+    const bottom = top + viewportHeight;
+    const fromBottom = contentHeight - bottom;
+    this.trackViewBottomShadeAlpha = Math.max(0, Math.min(1, fromBottom / 300));
+  }
+
   private renderAutorunDisposer = () => {};
   private renderAutorunDirty = true;
   private renderIsInRender = false;
@@ -1679,9 +1687,7 @@ export class NanoApp extends LitElement {
   height: 3em;
   left: 0;
   right: 0;
-  --theme-bg4-alpha: rgba(var(--theme-bg4), 0);
-  background: linear-gradient(0deg, var(--theme-bg4) 0%, transparent 100%);
-  opacity: 0.3;
+  background: linear-gradient(0deg, color-mix(in srgb, transparent, var(--theme-bg4) 30%) 0%, transparent 100%);
   pointer-events: none;
 }
 .player-artwork {
@@ -1950,7 +1956,7 @@ input {
 
   <div class="player">
     <div class="player-divider">
-      <div class="player-top-shade"></div>
+      <div class="player-top-shade" style=${styleMap({'opacity': this.trackViewBottomShadeAlpha})}></div>
     </div>
     <div
         class="player-artwork click-target"
@@ -2089,6 +2095,9 @@ input {
     if (!this.didReadyTrackListView) {
       this.didReadyTrackListView = true;
 
+      this.trackListView.onScrolled = (top: number, contentHeight: number, viewportHeight: number) => {
+        this.updateViewForScroll(top, contentHeight, viewportHeight);
+      };
       this.trackListView.onUserScrolled = () => {
         this.updateAnchorForTrackView();
       };

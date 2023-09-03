@@ -35,6 +35,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   elementCollectCountWaterlevel = 16;
   elementsInViewPaddingCount = 16;
 
+  onScrolled?: (top: number, contentHeight: number, viewportHeight: number) => void;
   onUserScrolled?: () => void;
   userScrolledUpdateDelay = 100;
 
@@ -173,11 +174,12 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
         }
       }
     });
+    this.onScrolled?.(this.scrollContainer.scrollTop, this.scrollContainer.scrollHeight, this.scrollContainer.clientHeight);
   }
 
   private updateViewport(force = false) {
-    const scrollTop = this.scrollContainer!.scrollTop;
-    const scrollBottom = scrollTop + this.scrollContainer!.clientHeight;
+    const scrollTop = this.scrollContainer.scrollTop;
+    const scrollBottom = scrollTop + this.scrollContainer.clientHeight;
     const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
     const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
     const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - this.elementsInViewPaddingCount));
@@ -290,6 +292,9 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
     .scroll-container {
       height: 100%;
       overflow: scroll;
+    }
+
+    .content-container {
       position: relative;
     }
 
@@ -317,12 +322,16 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
     const contentHeightStyles = {'height': `${this.rowHeight * this.totalCount + 1}px`};
     return html`
 <div id="scroll-container" class="scroll-container" @scroll=${this.onScroll}>
-  <div id="content-area" class="content-area" style=${styleMap(contentHeightStyles)}">
+  <slot name="header"></slot>
+  <div class="content-container">
+    <div id="content-area" class="content-area" style=${styleMap(contentHeightStyles)}">
+    </div>
+    <div id="group-content-area" class="group-content-area" style=${styleMap(contentHeightStyles)})}">
+    </div>
+    <div id="markers-area" class="markers-area" style=${styleMap(contentHeightStyles)})}">
+    </div>
   </div>
-  <div id="group-content-area" class="group-content-area" style=${styleMap(contentHeightStyles)})}">
-  </div>
-  <div id="markers-area" class="markers-area" style=${styleMap(contentHeightStyles)})}">
-  </div>
+  <slot name="footer"></slot>
 </div>
     `;
   }
