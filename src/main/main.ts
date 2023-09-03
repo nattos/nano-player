@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow, shell } from 'electron';
+import { app, ipcMain, BrowserWindow, protocol, net, shell } from 'electron';
 import settings from 'electron-settings';
 import * as path from 'path';
 import * as utils from '../utils';
@@ -63,6 +63,9 @@ ipcMain.handle('browserWindow.showFileInBrowser', (e, absPath: string) => shell.
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling');
 app.whenReady().then(() => {
+  protocol.handle('nanofile', (request) =>
+    net.fetch('file://' + request.url.slice('nanofile://'.length)));
+
   createWindow();
 })
 

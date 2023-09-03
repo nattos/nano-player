@@ -23,12 +23,14 @@ import { Playlist, PlaylistManager } from './playlist-manager';
 import { Selection, SelectionMode } from './selection';
 import { ImageCache } from './ImageCache';
 import { getBrowserWindow } from './renderer-ipc';
+import { EvalParams, createEvaluator, createTrackEvaluator } from './code-eval';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
 enum Overlay {
   AlbumArt = 'album-art',
   DragDropAccept = 'drag-drop-accept',
+  TranscodeBegin = 'transcode-begin',
 }
 
 enum DragDropState {
@@ -1297,6 +1299,10 @@ export class NanoApp extends LitElement {
     this.overlay = undefined;
   }
 
+  private overlayStopPropagation(e: Event) {
+    e.stopPropagation();
+  }
+
   @action
   showAlbumArtOverlay() {
     this.overlay = Overlay.AlbumArt;
@@ -1319,6 +1325,17 @@ export class NanoApp extends LitElement {
     const bottom = top + viewportHeight;
     const fromBottom = contentHeight - bottom;
     this.trackViewBottomShadeAlpha = Math.max(0, Math.min(1, fromBottom / 300));
+  }
+
+  @observable.shallow private transcodeOperation: TranscodeOperation|null = null;
+  @query('#transcode-code-input') transcodeCodeInputElement?: HTMLInputElement;
+
+  @action
+  private transcodeUpdateCode() {
+    if (!this.transcodeOperation) {
+      return;
+    }
+    this.transcodeOperation.code = this.transcodeCodeInputElement?.value ?? '';
   }
 
   private renderAutorunDisposer = () => {};
@@ -1394,6 +1411,20 @@ export class NanoApp extends LitElement {
             this.selection.select(newAnchor.index, oldSelectionTrack, SelectionMode.SetPrimary);
           }
         }
+
+
+
+
+
+
+        // TODO: Debug remove.
+        if (!this.transcodeOperation) {
+          this.transcodeOperation = new TranscodeOperation(Array.from(utils.filterNulllike(this.tracksInView.slice(73, 83))));
+        }
+
+
+
+
       }));
     }
     if (results.contextChanged) {
@@ -1610,6 +1641,12 @@ export class NanoApp extends LitElement {
 .outer.window-deactive {
 }
 
+.code {
+  white-space: pre;
+  font-family: Monaco, monospace;
+  font-size: 80%;
+}
+
 .window-title-bar {
   position: relative;
   height: 36px;
@@ -1762,16 +1799,19 @@ export class NanoApp extends LitElement {
   white-space: nowrap;
 }
 
-.player-controls > .small-button {
+.small-button {
   display: flex;
   flex-grow: 1;
 }
-.player-controls > .small-button:hover {
+.small-button:hover {
   background-color: var(--theme-color4);
 }
 .player-controls-button-text {
   margin: auto;
   letter-spacing: var(--theme-letter-spacing-button);
+}
+.small-button simple-icon {
+  margin: auto;
 }
 
 .query-container {
@@ -1830,16 +1870,18 @@ export class NanoApp extends LitElement {
   width: calc(100% - 3em);
   height: 100%;
   font-size: 200%;
-  border: none;
   background-color: transparent;
   margin: 0px 1.5em;
-  outline: none;
 }
 
 input {
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-weight: 300;
   color: var(--theme-fg);
+  background-color: var(--theme-bg);
+  font-size: var(--theme-font-size);
+  outline: none;
+  border: none;
 }
 
 .query-completion-area {
@@ -1937,6 +1979,38 @@ input {
 .screaming-headline-text simple-icon {
   font-size: 200%;
 }
+
+.dialog {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 80%;
+  height: 80%;
+  display: grid;
+  grid-auto-columns: 1fr auto;
+  grid-auto-rows: auto 1fr;
+  background-color: var(--theme-bg2);
+  pointer-events: auto;
+}
+.dialog-close-button {
+  grid-area: 1 / 2 / span 1 / span 1;
+  display: flex;
+  width: 3em;
+  height: 2em;
+}
+.dialog-title {
+  grid-area: 1 / 1 / span 1 / span 1;
+  margin-top: auto;
+  margin-bottom: auto;
+  margin-left: 0.25em;
+}
+.dialog-content {
+  grid-area: 2 / 1 / span 1 / span 2;
+  margin-left: 0.25em;
+}
+
+
   `;
 
   renderInner() {
@@ -2016,29 +2090,55 @@ input {
   }
 
   private renderOverlay() {
-    if (this.overlay === Overlay.AlbumArt) {
-      return html`
-<div class="overlay-container">
+    if (this.overlay === undefined) {
+      return html``;
+    }
+    return html`
+<div class="overlay-container" @keypress=${this.overlayStopPropagation} @keydown=${this.overlayStopPropagation}>
   <div class="overlay-underlay" @click=${this.closeOverlay}></div>
   <div class="overlay-content">
-    <img
-        class="overlay-album-art-content"
-        alt=""
-        src=${this.currentPlayImageUrl}>
-    </img>
+    ${this.renderOverlayContent()}
   </div>
 </div>
 `;
+  }
+
+  private renderOverlayContent() {
+    if (this.overlay === Overlay.AlbumArt) {
+      return html`
+<img
+    class="overlay-album-art-content"
+    alt=""
+    src=${this.currentPlayImageUrl}>
+</img>
+`;
     } else if (this.overlay === Overlay.DragDropAccept) {
       return html`
-<div class="overlay-container">
-  <div class="overlay-underlay" @click=${this.closeOverlay}></div>
-  <div class="overlay-content">
-    <div class="screaming-headline-text">
-      <div>Drop files to add to ${this.trackViewCursor?.primarySource === ListPrimarySource.Playlist ? 'playlist' : 'library'}</div>
-      <div>
-        <simple-icon icon=${this.dragDropState === DragDropState.Success ? 'check-circle' : this.dragDropState === DragDropState.Failure ? 'exclamation-circle' : 'bolt'}></simple-icon>
-      </div>
+<div class="screaming-headline-text">
+  <div>Drop files to add to ${this.trackViewCursor?.primarySource === ListPrimarySource.Playlist ? 'playlist' : 'library'}</div>
+  <div>
+    <simple-icon icon=${this.dragDropState === DragDropState.Success ? 'check-circle' : this.dragDropState === DragDropState.Failure ? 'exclamation-circle' : 'bolt'}></simple-icon>
+  </div>
+</div>
+`;
+    } else if (this.overlay === Overlay.TranscodeBegin) {
+      return html`
+<div class="dialog">
+  <div class="dialog-close-button small-button click-target" @click=${this.closeOverlay}>
+    <simple-icon icon="times"></simple-icon>
+  </div>
+  <div class="dialog-title">Transcode</div>
+  <div class="dialog-content">
+    <div>MP3</div>
+    <div>Bitrate 320kbps CBR</div>
+    <div>Code <input id="transcode-code-input" class="code" @input=${this.transcodeUpdateCode} style="width: 60em;height: 10em;"></input></div>
+    <div>
+      <div>Example input</div>
+      <div class="code">${JSON.stringify(this.transcodeOperation?.inputs?.at(0), null, 2)}</div>
+    </div>
+    <div>
+      <div>Example outputs<div>
+      ${this.transcodeOperation?.outputs?.map(output => html`<div class="code">${output}</div>`)}
     </div>
   </div>
 </div>
@@ -2141,6 +2241,67 @@ input {
     }
   }
 }
+
+class TranscodeOperation {
+  @observable code: string = '';
+  readonly inputs: EvalParams[];
+  @observable.shallow outputs: string[] = [];
+
+  private updateCodeEpoch = 0;
+  private readonly updateQueue = new utils.OperationQueue();
+
+  constructor(public readonly inputTracks: Track[]) {
+    makeObservable(this);
+    observe(this, 'code', this.updateOutputs.bind(this));
+
+    let listIndex = 0;
+    let listCount = this.inputTracks.length;
+    this.inputs = this.inputTracks.map(track => {
+      const input: EvalParams = {
+        'listIndex': listIndex++,
+        'listCount': listCount,
+        'track': track,
+      };
+      return input;
+    });
+  }
+
+  private updateOutputs() {
+    const thisEpoch = ++this.updateCodeEpoch;
+    setTimeout(() => {
+      if (thisEpoch !== this.updateCodeEpoch) {
+        return;
+      }
+      this.updateQueue.push(() => {
+        if (thisEpoch !== this.updateCodeEpoch) {
+          return;
+        }
+        this.doUpdateOutputs();
+      });
+    }, 500);
+  }
+
+  private async doUpdateOutputs() {
+    const results: string[] = [];
+
+    const compileResult = createEvaluator(this.code);
+    if (compileResult.error) {
+      results.push(compileResult.error);
+    } else {
+      for (const input of this.inputs) {
+        const result = compileResult.func?.(input);
+        results.push(result?.error ?? result?.value?.toString() ?? '<undefined>');
+        // TODO: Improve heuristic.
+        await utils.sleep(0);
+      }
+    }
+    runInAction(() => {
+      this.outputs = results;
+    });
+  }
+}
+
+
 
 function getChipLabel(c: CandidateCompletion): string|undefined {
   if (c.forCommand?.chipLabel) {

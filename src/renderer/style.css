@@ -21,9 +21,11 @@ body {
   --theme-letter-spacing-wide: 0.05em;
   --theme-letter-spacing-button: 0.1em;
   --theme-button-size: 24px;
+  --theme-font-size: 16px;
 
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-weight: 300;
+  font-size: var(--theme-font-size);
   color: var(--theme-fg2);
 
   background-color: var(--theme-bg);

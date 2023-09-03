@@ -5,9 +5,8 @@ import * as constants from './constants';
 import * as fileUtils from './file-utils';
 import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';
-import * as babel from '@babel/standalone';
-import * as jsinterpreter from 'js-interpreter';
 import {Code} from './config';
+import { createTrackEvaluator } from './code-eval';
 
 interface JsMediaTags {
   tags?: JsMediaTagsTags;
@@ -46,8 +45,8 @@ export class MediaIndexer {
   private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<[FileSystemHandle, string]>();
   private readonly toIndexQueue = new utils.AsyncProducerConsumerQueue<string>();
 
-  private readonly sortKeyEvaler = MediaIndexer.createEvaler(Code.LIBRARY_ORDER_KEY_CODE);
-  private readonly groupingKeyEvaler = MediaIndexer.createEvaler(Code.GROUPING_KEY_CODE);
+  private readonly sortKeyEvaler = createTrackEvaluator(Code.LIBRARY_ORDER_KEY_CODE);
+  private readonly groupingKeyEvaler = createTrackEvaluator(Code.GROUPING_KEY_CODE);
 
   start() {
     if (this.started) {
@@ -288,41 +287,6 @@ export class MediaIndexer {
       }
     }
     return tags;
-  }
-
-  private static createEvaler(code: string): (track: Track) => string|undefined {
-    try {
-      jsinterpreter.default.REGEXP_MODE = 1;
-      const codeES5 = babel.transform(code, {'presets': ['env']}).code;
-      const evaler = new jsinterpreter.default(codeES5);
-
-      const addGlobalFunc = (name: string, func: Function) => {
-        const ofunc = evaler.createNativeFunction(func);
-        evaler.setProperty(evaler.globalObject, name, ofunc);
-      }
-      addGlobalFunc('filePathDirectory', utils.filePathDirectory);
-      addGlobalFunc('formatIntPadded', utils.formatIntPadded);
-
-      return (track: Track) => {
-        try {
-          const otrack = evaler.nativeToPseudo(track);
-          evaler.setProperty(evaler.globalObject, 'track', otrack);
-          evaler.run();
-          const result = evaler.value;
-          if (typeof result === 'string') {
-            return result as string;
-          }
-        } catch (e) {
-          console.error(e);
-        } finally {
-          evaler.appendCode(codeES5);
-        }
-        return undefined;
-      };
-    } catch (e) {
-      console.error(e);
-    }
-    return (track) => undefined;
   }
 }
 
