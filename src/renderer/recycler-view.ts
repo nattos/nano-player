@@ -29,7 +29,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
   @query('#markers-area') markersArea!: HTMLElement;
 
   @property() rowHeight = 42;
-  @property() totalCount = 100;
+  @property() totalCount = 0;
   dataProvider?: RecyclerViewDataProvider<TElement, TData, TGroupElement, TGroupData>;
 
   elementCollectCountWaterlevel = 16;
@@ -40,6 +40,7 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
 
   @observable viewportMinIndex = 0;
   @observable viewportMaxIndex = 0;
+  private oldTotalCount = 0;
 
   private didReady = false;
   private readonly elementsDisplayedMap = new Map<number, TElement>();
@@ -180,7 +181,8 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
     const viewportMinIndex = Math.floor(scrollTop / this.rowHeight);
     const viewportMaxIndex = Math.ceil(scrollBottom / this.rowHeight);
     const spawnMinIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMinIndex - this.elementsInViewPaddingCount));
-    const spawnMaxIndex = Math.max(0, Math.min(this.totalCount - 1, viewportMaxIndex + this.elementsInViewPaddingCount));
+    const spawnMaxIndex = Math.min(this.totalCount - 1, Math.max(0, viewportMaxIndex + this.elementsInViewPaddingCount));
+    const countChanged = this.oldTotalCount !== this.totalCount;
 
     if (!force) {
       if (this.viewportMinIndex === viewportMinIndex && this.viewportMaxIndex === viewportMaxIndex) {
@@ -194,11 +196,11 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
       }
 
       const collectWaterlevel = spawnMaxIndex - spawnMinIndex + this.elementCollectCountWaterlevel;
-      if (this.elementsDisplayedMap.size > collectWaterlevel) {
+      if (this.elementsDisplayedMap.size > collectWaterlevel || countChanged) {
         // Sweep elements.
         const toCollect = [];
         for (const [index, value] of this.elementsDisplayedMap) {
-          if (index < spawnMinIndex || index > spawnMaxIndex) {
+          if (index < spawnMinIndex || index > spawnMaxIndex || index >= this.totalCount) {
             toCollect.push(index);
           }
         }
