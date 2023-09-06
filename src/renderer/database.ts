@@ -4,9 +4,11 @@ import { LibraryPathEntry, Track, TrackPrefix, SearchTableEntry, PlaylistEntry, 
 import { TrackPositionAnchor, TrackCursor } from "./track-cursor";
 import * as utils from '../utils';
 import * as constants from './constants';
+import * as environment from './environment';
+import { PathsDirectoryHandle, PathsHandle, deserializePathsHandle, makeRootDirectoryHandle } from "./paths";
 
 export interface ResolvedSubpathInLibraryPath {
-  handle: FileSystemHandle;
+  handle: PathsHandle;
   libraryPath?: LibraryPathEntry;
   subpath?: string[];
 }
@@ -93,6 +95,7 @@ const SORT_CONTEXTS_TO_METADATA_PATH = new Map<SortContext, string[]>([
   [SortContext.Genre, ['metadata', 'genre']],
   [SortContext.Index, ['generatedMetadata', 'librarySortKey']],
 ]);
+const ROOT_SOURCE_KEY = '$';
 
 export class Database {
   public static get instance() {
@@ -181,7 +184,7 @@ export class Database {
     return this.libraryPaths;
   }
 
-  async addLibraryPath(directoryHandle: FileSystemDirectoryHandle): Promise<LibraryPathEntry> {
+  async addLibraryPath(directoryHandle: PathsDirectoryHandle): Promise<LibraryPathEntry> {
     await this.database;
 
     // Remove duplicate. Allow subdirectories, because it's possible to add a parent afterwards.
@@ -227,7 +230,7 @@ export class Database {
     });
   }
 
-  async resolveInLibraryPaths(file: FileSystemHandle): Promise<ResolvedSubpathInLibraryPath> {
+  async resolveInLibraryPaths(file: PathsHandle): Promise<ResolvedSubpathInLibraryPath> {
     await this.database;
     const libraryPaths = Array.from(this.getLibraryPaths());
     let containedLibraryPath: LibraryPathEntry|null = null;
@@ -842,6 +845,7 @@ export class Database {
     if (constants.DEBUG_RESET_DATABASE) {
       await deleteDB('data-tables');
     }
+    let didUpgrade = false;
     const db = await openDB('data-tables', 1, {
       upgrade: (upgradeDb) => {
       const allTracksTable = upgradeDb.createObjectStore(TableNames.AllTracks, { keyPath: 'path' });
@@ -871,8 +875,23 @@ export class Database {
       upgradeDb.createObjectStore(TableNames.Playlists, { keyPath: 'key' });
       upgradeDb.createObjectStore(TableNames.Preferences, { keyPath: 'key' });
 
+      didUpgrade = true;
       console.log(upgradeDb);
     }})
+
+    if (didUpgrade) {
+      if (environment.isElectron()) {
+        this.syncLibraryPathsQueue.push(async () => {
+          const tx = db.transaction(TableNames.LibraryPaths, 'readwrite');
+          const libraryPathsTable = tx.objectStore(TableNames.LibraryPaths);
+          libraryPathsTable.put({
+            path: ROOT_SOURCE_KEY,
+            directoryHandle: makeRootDirectoryHandle(),
+            indexedSubpaths: [],
+          });
+        });
+      }
+    }
 
     const syncLibraryPathsOp = this.syncLibraryPathsQueue.push(async () => {
       const tx = db.transaction(TableNames.LibraryPaths, 'readonly');
@@ -880,6 +899,7 @@ export class Database {
       this.libraryPaths = await libraryPathsTable.getAll() as LibraryPathEntry[];
       this.libraryPathsMap.clear();
       for (const entry of this.libraryPaths) {
+        entry.directoryHandle = deserializePathsHandle(entry.directoryHandle);
         this.libraryPathsMap.set(entry.path, entry);
       }
       this.libraryPathsLoaded.resolve();

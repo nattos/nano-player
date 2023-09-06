@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow, protocol, net, shell } from 'electron';
+import { app, dialog, ipcMain, BrowserWindow, shell } from 'electron';
 import settings from 'electron-settings';
 import * as path from 'path';
 import * as utils from '../utils';
@@ -23,6 +23,8 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
       contextIsolation: false,
+      // Custom protocols seem to break media streaming...
+      webSecurity: false,
     },
     width: windowWidth,
     height: windowHeight,
@@ -58,14 +60,21 @@ function saveWindowSize() {
 
 ipcMain.handle('browserWindow.active', () => windowIsActive);
 ipcMain.handle('browserWindow.showFileInBrowser', (e, absPath: string) => shell.showItemInFolder(absPath));
+ipcMain.handle('browserWindow.showDirectoryPicker', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory']
+  });
+  if (canceled) {
+    return undefined;
+  } else {
+    return filePaths[0];
+  }
+});
 
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling');
 app.whenReady().then(() => {
-  protocol.handle('nanofile', (request) =>
-    net.fetch('file://' + request.url.slice('nanofile://'.length)));
-
   createWindow();
 })
 

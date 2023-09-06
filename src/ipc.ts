@@ -4,4 +4,5 @@ export interface BrowserWindow {
   onDidActiveChange?: (newState: boolean) => void,
 
   showFileInBrowser(absPath: string): void;
+  showDirectoryPicker(): Promise<string|undefined>;
 }

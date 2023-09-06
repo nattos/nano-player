@@ -3,6 +3,7 @@ import * as constants from './constants';
 import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';
 import { MediaIndexer } from './media-indexer';
+import { createUrl, revokeUrl } from './paths';
 
 export class ImageCache {
   public static get instance() {
@@ -44,7 +45,7 @@ export class ImageCache {
   }
 
   private evicted(imageUrl: string) {
-    URL.revokeObjectURL(imageUrl);
+    revokeUrl(imageUrl);
   }
 
   private async loadImageFile(path: string): Promise<string|undefined> {
@@ -56,7 +57,7 @@ export class ImageCache {
       return undefined;
     }
 
-    const permissionResult = await (libraryPath.directoryHandle as any)?.queryPermission();
+    const permissionResult = await libraryPath.directoryHandle?.queryPermission();
     if (permissionResult !== 'granted') {
       return undefined;
     }
@@ -65,7 +66,7 @@ export class ImageCache {
     if (!imageFile) {
       return undefined;
     }
-    return URL.createObjectURL(await imageFile.getFile());
+    return await createUrl(imageFile);
   }
 
   private async loadCoverArtFromMetadata(path: string): Promise<string|undefined> {
@@ -77,7 +78,7 @@ export class ImageCache {
       return undefined;
     }
 
-    const permissionResult = await (libraryPath.directoryHandle as any)?.queryPermission();
+    const permissionResult = await libraryPath.directoryHandle?.queryPermission();
     if (permissionResult !== 'granted') {
       return undefined;
     }

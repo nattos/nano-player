@@ -1,3 +1,4 @@
+import { PathsDirectoryHandle, PathsFileHandle } from "./renderer/paths";
 
 export class Resolvable<T extends any|void> {
   private resolveFunc = (value: T) => {}
@@ -287,8 +288,8 @@ export function filePathExtension(path: string): string {
   return fileName.slice(splitIndex + 1);
 }
 
-export async function getSubpathDirectory(directory: FileSystemDirectoryHandle, subpath: string): Promise<FileSystemDirectoryHandle|undefined> {
-  let found: FileSystemDirectoryHandle = directory;
+export async function getSubpathDirectory(directory: PathsDirectoryHandle, subpath: string): Promise<PathsDirectoryHandle|undefined> {
+  let found: PathsDirectoryHandle = directory;
   for (const toFind of subpath.split('/')) {
     if (toFind === '.' || toFind === '') {
       continue;
@@ -302,7 +303,10 @@ export async function getSubpathDirectory(directory: FileSystemDirectoryHandle, 
   return found;
 }
 
-export async function getSubpathFile(directory: FileSystemDirectoryHandle, subpath: string): Promise<FileSystemFileHandle|undefined> {
+export async function getSubpathFile(directory: PathsDirectoryHandle|undefined, subpath: string): Promise<PathsFileHandle|undefined> {
+  if (!directory) {
+    return undefined;
+  }
   const pathToDirectory = filePathDirectory(subpath);
   const fileName = filePathFileName(subpath);
   const containingDirectory = await getSubpathDirectory(directory, pathToDirectory);

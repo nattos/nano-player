@@ -26,7 +26,10 @@ module.exports = [
         jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
         'js-interpreter': 'js-interpreter/lib/js-interpreter.min.js',
       },
-      fallback: { "vm": false },
+      fallback: {
+        "fs": false,
+        "vm": false,
+      },
     },
     externals: {
       'node:fs': 'commonjs2 node:fs'

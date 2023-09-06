@@ -24,6 +24,7 @@ import { Selection, SelectionMode } from './selection';
 import { ImageCache } from './ImageCache';
 import { getBrowserWindow } from './renderer-ipc';
 import { EvalParams, createEvaluator, createTrackEvaluator } from './code-eval';
+import { PathsDirectoryHandle, PathsHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -412,7 +413,7 @@ export class NanoApp extends LitElement {
 
   @action
   async doLibraryPathsAddFromDialog(setAsIndexed: boolean) {
-    const directoryHandle = await (window as any).showDirectoryPicker() as FileSystemDirectoryHandle;
+    const directoryHandle = await showDirectoryPicker();
     if (!directoryHandle) {
       return;
     }
@@ -441,7 +442,7 @@ export class NanoApp extends LitElement {
       if (resolvedLibraryPath.directoryHandle) {
         // TODO: Centralize permission handling.
         // TODO: Deal with API.
-        const permissionResult = await (resolvedLibraryPath.directoryHandle as any)?.requestPermission();
+        const permissionResult = await resolvedLibraryPath.directoryHandle?.requestPermission();
         if (permissionResult === 'granted') {
           MediaIndexer.instance.queueFileHandle(resolvedLibraryPath.directoryHandle, newPath);
         }
@@ -540,25 +541,12 @@ export class NanoApp extends LitElement {
     }
 
     try {
-      let hadFile = false;
+      e.preventDefault();
       if (!e.dataTransfer?.files) {
         return;
       }
-      const files: DataTransferItem[] = [];
-      for (const item of e.dataTransfer?.items) {
-        if (item.kind !== 'file') {
-          continue;
-        }
-        files.push(item);
-        hadFile = true;
-      }
-      if (hadFile) {
-        e.preventDefault();
-      } else {
-      }
+      const fileHandles = await handlesFromDataTransfer(e.dataTransfer);
 
-      // TODO: Deal with API.
-      const fileHandles = await Promise.all(files.map(file => (file as any).getAsFileSystemHandle() as Promise<FileSystemHandle>));
       for (const fileHandle of fileHandles) {
         console.log(fileHandle);
       }
@@ -576,8 +564,8 @@ export class NanoApp extends LitElement {
         }
         const allPathPromises = resolvedPaths.map(async (resolvedPath) => {
           if (resolvedPath.handle.kind === 'directory') {
-            const directory = resolvedPath.handle as FileSystemDirectoryHandle;
-            const directoryHandle = resolvedPath.handle as FileSystemDirectoryHandle;
+            const directory = resolvedPath.handle as PathsDirectoryHandle;
+            const directoryHandle = resolvedPath.handle as PathsDirectoryHandle;
             const resultPaths: string[] = [];
             for await (const subfile of fileUtils.enumerateFilesRec(directoryHandle)) {
               const subpath = await directory.resolve(subfile);
@@ -606,7 +594,7 @@ export class NanoApp extends LitElement {
             console.log(`${resolvedPath.handle.name} is a loose file. Ephemeral files not supported yet.`);
             continue;
           }
-          const handle = resolvedPath.handle as FileSystemDirectoryHandle;
+          const handle = resolvedPath.handle as PathsDirectoryHandle;
           if (!resolvedPath.libraryPath || !resolvedPath.subpath) {
             toAdds.push({
               newLibraryPathFromHandle: handle,
@@ -641,7 +629,7 @@ export class NanoApp extends LitElement {
             (async () => {
               // TODO: Centralize permission handling.
               // TODO: Deal with API.
-              const permissionResult = await (updatedLibraryPath!.directoryHandle! as any)?.requestPermission();
+              const permissionResult = await updatedLibraryPath?.directoryHandle?.requestPermission();
               if (permissionResult === 'granted') {
                 MediaIndexer.instance.queueFileHandle(updatedLibraryPath!.directoryHandle!, toAdd.subpath);
               }
@@ -1136,7 +1124,7 @@ export class NanoApp extends LitElement {
       }
       // TODO: Centralize permission handling.
       // TODO: Deal with API.
-      const permissionResult = await (libraryPath.directoryHandle as any)?.requestPermission();
+      const permissionResult = await libraryPath.directoryHandle?.requestPermission();
       if (permissionResult !== 'granted') {
         continue;
       }
@@ -1478,32 +1466,37 @@ export class NanoApp extends LitElement {
 
   @action
   private async loadTrackInner(track: Track|undefined|null) {
-    if (!track || !track.fileHandle || (track.path === this.loadedTrackPath && this.currentPlayMoveEpoch === this.loadedTrackMoveEpoch)) {
+    if (!track || (track.path === this.loadedTrackPath && this.currentPlayMoveEpoch === this.loadedTrackMoveEpoch)) {
       return;
     }
     this.loadedTrackPath = track.path;
     this.loadedTrackMoveEpoch = this.currentPlayMoveEpoch;
 
     const sourceKey = Database.getPathSourceKey(track.path);
+    const filePath = Database.getPathFilePath(track.path);
     const libraryPath = Database.instance.findLibraryPath(sourceKey);
     if (!libraryPath) {
       return;
     }
     // TODO: Centralize permission handling.
     // TODO: Deal with API.
-    const permissionResult = await (libraryPath.directoryHandle as any)?.requestPermission();
+    const permissionResult = await libraryPath.directoryHandle?.requestPermission();
     if (permissionResult !== 'granted') {
       return;
     }
     try {
-      const file = await track.fileHandle.getFile();
+      const file = await utils.getSubpathFile(libraryPath.directoryHandle, filePath);
       if (this.audioElement.src) {
         await this.waitAudioElementSettled();
         const toRevoke = this.audioElement.src;
         this.audioElement.srcObject = null;
-        URL.revokeObjectURL(toRevoke);
+        revokeUrl(toRevoke);
       }
-      this.audioElement.src = URL.createObjectURL(file);
+      if (!file) {
+        return;
+      }
+      const blobUrl = await createUrl(file);
+      this.audioElement.src = blobUrl;
       this.setLoadedTrackPlaying(this.isPlaying);
       MediaIndexer.instance.updateMetadataForPath(track.path);
     } catch (e) {

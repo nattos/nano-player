@@ -7,6 +7,7 @@ import { Track, LibraryPathEntry, ArtworkRef } from './schema';
 import { Database, UpdateMode } from './database';
 import {Code} from './config';
 import { createTrackEvaluator } from './code-eval';
+import { PathsDirectoryHandle, PathsFileHandle, PathsHandle, createUrl, getFileOrAbsPath, revokeUrl, statFileHandle } from './paths';
 
 interface JsMediaTags {
   tags?: JsMediaTagsTags;
@@ -42,7 +43,7 @@ export class MediaIndexer {
   private static instanceField?: MediaIndexer;
 
   private started = false;
-  private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<[FileSystemHandle, string]>();
+  private readonly toAddQueue = new utils.AsyncProducerConsumerQueue<[PathsHandle, string]>();
   private readonly toIndexQueue = new utils.AsyncProducerConsumerQueue<string>();
 
   private readonly sortKeyEvaler = createTrackEvaluator(Code.LIBRARY_ORDER_KEY_CODE);
@@ -58,7 +59,7 @@ export class MediaIndexer {
     }
   }
 
-  queueFileHandle(handle: FileSystemHandle, subpath?: string) {
+  queueFileHandle(handle: PathsHandle, subpath?: string) {
     this.toAddQueue.add([handle, subpath ?? '']);
   }
 
@@ -78,7 +79,7 @@ export class MediaIndexer {
   private async fileIndexerProc() {
     await Database.instance.waitForLoad();
 
-    const flow = new utils.BatchedProducerConsumerFlow<[FileSystemFileHandle, string[], LibraryPathEntry]>(16);
+    const flow = new utils.BatchedProducerConsumerFlow<[PathsFileHandle, string[], LibraryPathEntry]>(16);
     flow.consume(async (entries) => {
       try {
         const toUpdatePaths: string[] = [];
@@ -93,7 +94,6 @@ export class MediaIndexer {
             if (toUpdate === undefined) {
               continue;
             }
-            toUpdate.fileHandle = fileHandle;
             toUpdate.addedDate = Date.now();
             toUpdate.metadata = {
               title: utils.filePathFileNameWithoutExtension(fileHandle.name),
@@ -112,8 +112,8 @@ export class MediaIndexer {
         // TODO: Handle deletions!
         const [handle, subpath] = await this.toAddQueue.pop();
         const filesIt = handle.kind === 'directory'
-            ? fileUtils.enumerateFilesRec(await utils.getSubpathDirectory(handle as FileSystemDirectoryHandle, subpath))
-            : [handle as FileSystemFileHandle];
+            ? fileUtils.enumerateFilesRec(await utils.getSubpathDirectory(handle as PathsDirectoryHandle, subpath))
+            : [handle as PathsFileHandle];
         for await (const foundFile of filesIt) {
           console.log(foundFile);
           const fileName = foundFile.name.toLocaleLowerCase();
@@ -148,22 +148,31 @@ export class MediaIndexer {
         const path = await this.toIndexQueue.pop();
         const track = await Database.instance.fetchTrackByPath(path);
         const sourceKey = Database.getPathSourceKey(path);
-        const containingDirectoryPath = utils.filePathDirectory(Database.getPathFilePath(path));
+        const filePath = Database.getPathFilePath(path);
+        const fileName = utils.filePathFileName(filePath);
+        const containingDirectoryPath = utils.filePathDirectory(filePath);
         const libraryPath = Database.instance.findLibraryPath(sourceKey);
-        if (track?.fileHandle === undefined || libraryPath === undefined) {
+        if (track === undefined || libraryPath === undefined) {
           continue;
         }
-        const file = await track.fileHandle.getFile();
-        const fileLastModifiedDate = file.lastModified;
 
-        let containingDirectory: FileSystemDirectoryHandle|undefined = undefined;
+        let containingDirectory: PathsDirectoryHandle|undefined = undefined;
         if (libraryPath.directoryHandle) {
           containingDirectory = await utils.getSubpathDirectory(libraryPath.directoryHandle, containingDirectoryPath);
         }
+        if (containingDirectory === undefined) {
+          continue;
+        }
+        const fileHandle = await utils.getSubpathFile(containingDirectory, fileName);
+        if (fileHandle === undefined) {
+          continue;
+        }
+        const fileStats = await statFileHandle(fileHandle);
+        const fileLastModifiedDate = fileStats.lastModified;
 
         let tags: JsMediaTags;
         try {
-          tags = await this.readJsMediaTags(track.fileHandle);
+          tags = await this.readJsMediaTags(fileHandle);
           console.log(tags);
         } catch (e) {
           if ((e as any)?.type === 'tagFormat') {
@@ -178,7 +187,7 @@ export class MediaIndexer {
         if (!tags.tags) {
           tags.tags = {};
         }
-        tags.tags.title ??= utils.filePathFileNameWithoutExtension(file.name);
+        tags.tags.title ??= utils.filePathFileNameWithoutExtension(fileHandle.name);
 
         let coverArtRef: ArtworkRef|undefined = undefined;
         if (containingDirectory) {
@@ -195,7 +204,7 @@ export class MediaIndexer {
           }
         }
 
-        const audioMetadataInfo = await audioMetadataInfoReader.read(file);
+        const audioMetadataInfo = await audioMetadataInfoReader.read(fileHandle);
         const duration = audioMetadataInfo?.duration;
 
         const trackNumberParts = tags?.tags?.track?.split('/');
@@ -230,11 +239,9 @@ export class MediaIndexer {
 
         // Excise values structuredClone can't handle.
         const trackShallowClone = utils.merge({}, track);
-        trackShallowClone.fileHandle = undefined;
 
         // Check if the updater actually changes anything.
         const dryRunModifiedTrack = structuredClone(trackShallowClone);
-        dryRunModifiedTrack.fileHandle = undefined;
         trackUpdaterFunc((path) => path === track.path ? dryRunModifiedTrack : undefined);
         if (utils.isDeepStrictEqual(dryRunModifiedTrack, trackShallowClone)) {
           console.log(`Indexed: ${track.path} (unchanged)`);
@@ -249,7 +256,7 @@ export class MediaIndexer {
     }
   }
 
-  async readCoverArtFromFileMetadata(fileHandle: FileSystemFileHandle): Promise<Uint8Array|undefined> {
+  async readCoverArtFromFileMetadata(fileHandle: PathsFileHandle): Promise<Uint8Array|undefined> {
     try {
       const tags = await this.readJsMediaTags(fileHandle);
       const bytesArray = tags.tags?.picture?.data;
@@ -263,8 +270,8 @@ export class MediaIndexer {
     }
   }
 
-  private async readJsMediaTags(fileHandle: FileSystemFileHandle): Promise<JsMediaTags> {
-    const file = await fileHandle.getFile();
+  private async readJsMediaTags(fileHandle: PathsFileHandle): Promise<JsMediaTags> {
+    const file = await getFileOrAbsPath(fileHandle);
     const tagsReader = new jsmediatagsReader(file);
 
     let tagsResolve: (value: {}) => void = () => {};
@@ -302,7 +309,7 @@ class AudioMetadataInfoReader {
     this.audioElement.addEventListener('loadedmetadata', () => this.audioMetadataReadSucceeded());
   }
 
-  async read(file: File): Promise<AudioMetadataInfo|undefined> {
+  async read(fileHandle: PathsFileHandle): Promise<AudioMetadataInfo|undefined> {
     try {
       await this.audioMetadataReadResolvable?.promise;
     } catch {}
@@ -311,10 +318,10 @@ class AudioMetadataInfoReader {
       this.audioMetadataReadResolvable = resultPromise;
       if (this.audioElement.src) {
         const toRevoke = this.audioElement.src;
-        this.audioElement.src = '';
-        URL.revokeObjectURL(toRevoke);
+        this.audioElement.srcObject = null;
+        revokeUrl(toRevoke);
       }
-      this.audioElement.src = URL.createObjectURL(file);
+      this.audioElement.src = await createUrl(fileHandle);
       return await resultPromise.promise;
     } catch (e) {
       console.error(e);
@@ -325,6 +332,9 @@ class AudioMetadataInfoReader {
   }
 
   private audioMetadataReadFailed() {
+    if (!this.audioElement.error) {
+      return;
+    }
     this.audioMetadataReadResolvable?.reject(this.audioElement.error?.message);
     this.audioMetadataReadResolvable = undefined;
     if (this.audioElement.srcObject) {

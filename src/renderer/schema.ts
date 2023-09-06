@@ -1,8 +1,8 @@
+import { PathsDirectoryHandle } from "./paths";
 
 export interface Track {
   path: string;
   filePath: string;
-  fileHandle?: FileSystemFileHandle;
   metadata?: TrackMetadata;
   generatedMetadata?: GeneratedTrackMetadata;
   addedDate: number;
@@ -48,8 +48,7 @@ export interface SearchTableEntry extends Track {}
 
 export interface LibraryPathEntry {
   path: string;
-  directoryHandle?: FileSystemDirectoryHandle;
-  fileHandle?: FileSystemFileHandle;
+  directoryHandle?: PathsDirectoryHandle;
   indexedSubpaths: string[];
 }
 

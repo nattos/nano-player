@@ -1,10 +1,11 @@
+import { PathsDirectoryHandle, PathsFileHandle } from "./paths";
 
-export function enumerateImmediateFiles(directory: FileSystemDirectoryHandle) {
+export function enumerateImmediateFiles(directory: PathsDirectoryHandle) {
   // TODO: API not available.
-  return (directory as any).values() as AsyncIterable<FileSystemHandle>;
+  return directory.values();
 }
 
-export async function* enumerateFilesRec(directory: FileSystemDirectoryHandle|undefined) {
+export async function* enumerateFilesRec(directory: PathsDirectoryHandle|undefined) {
   if (!directory) {
     return;
   }
@@ -15,12 +16,12 @@ export async function* enumerateFilesRec(directory: FileSystemDirectoryHandle|un
       break;
     }
 
-    const children = enumerateImmediateFiles(toVisit);
+    const children = toVisit.values();
     for await (const child of children) {
       if (child.kind === 'directory') {
-        toVisitQueue.push(child as FileSystemDirectoryHandle);
+        toVisitQueue.push(child as PathsDirectoryHandle);
       } else {
-        yield child as FileSystemFileHandle;
+        yield child as PathsFileHandle;
       }
     }
   }

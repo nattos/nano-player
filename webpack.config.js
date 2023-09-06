@@ -52,7 +52,8 @@ module.exports = [
     resolve: {
       extensions: ['.tsx', '.ts', '.js'],
       alias: {
-        jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
+        // jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
+        jsmediatags: 'jsmediatags/build2/jsmediatags.js',
       },
     },
     output: {
