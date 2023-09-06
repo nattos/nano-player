@@ -83,7 +83,7 @@ export class TrackGroupView extends LitElement {
         @mousedown=${this.clicked}
         @dblclick=${this.dblclick}
         style=${styleMap({
-          'background-image': `url(${this.imageUrl})`,
+          'background-image': this.imageUrl ? `url(${this.imageUrl})` : undefined,
         })}>
     </div>
   </div>

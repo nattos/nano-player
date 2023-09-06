@@ -50,7 +50,7 @@ export function getFileOrAbsPath(handle: PathsFileHandle): Promise<File|string> 
 export async function createUrl(handle: PathsFileHandle): Promise<string> {
   const fsHandle = handle as FsFileHandle;
   if (fsHandle.isFsHandle) {
-    return `file://${fsHandle.absPath}`;
+    return encodeURI(`file://${fsHandle.absPath}`).replaceAll('#', '%23');
   }
   return URL.createObjectURL(await (fsHandle as unknown as FileSystemFileHandle).getFile());
 }

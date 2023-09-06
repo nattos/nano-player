@@ -2028,7 +2028,7 @@ input {
     <div
         class="player-artwork click-target"
         style=${styleMap({
-          'background-image': `url(${this.currentPlayImageUrl})`,
+          'background-image': this.currentPlayImageUrl ? `url("${this.currentPlayImageUrl}")` : undefined,
         })}
         @click=${this.doFocusPlayingTrack}>
       <div class="player-artwork-expand-overlay">
