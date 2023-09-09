@@ -27,6 +27,23 @@ export interface FileStats {
   readonly lastModified: number;
 }
 
+export async function getHandleFromAbsPath(absPath: string): Promise<PathsHandle|undefined> {
+  if (environment.isElectron()) {
+    const fs = await lazyFs();
+    const stats = (await fs!.promises.stat(absPath));
+    const isFile = stats.isFile();
+    const isDirectory = stats.isDirectory();
+    if (isDirectory) {
+      return new FsDirectoryHandle(absPath);
+    } else if (isFile) {
+      return new FsFileHandle(absPath);
+    } else {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function statFileHandle(handle: PathsHandle): Promise<FileStats> {
   const fsHandle = handle as FsHandle;
   if (fsHandle.isFsHandle) {

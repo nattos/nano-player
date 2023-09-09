@@ -45,8 +45,15 @@ export function createEvaluator(code: string): CompileResult {
       const ofunc = evaler.createNativeFunction(func);
       evaler.setProperty(evaler.globalObject, name, ofunc);
     }
-    addGlobalFunc('filePathDirectory', utils.filePathDirectory);
+    addGlobalFunc('parseIntOr', utils.parseIntOr);
+    addGlobalFunc('formatDuration', utils.formatDuration);
     addGlobalFunc('formatIntPadded', utils.formatIntPadded);
+    addGlobalFunc('filePathDirectory', utils.filePathDirectory);
+    addGlobalFunc('filePathFileName', utils.filePathFileName);
+    addGlobalFunc('filePathChangeExt', utils.filePathChangeExt);
+    addGlobalFunc('filePathExtension', utils.filePathExtension);
+    addGlobalFunc('filePathResolveAbsPath', utils.filePathResolveAbsPath);
+    addGlobalFunc('filePathCombine', utils.filePathCombine);
 
     const stringPrototype = evaler.getProperty(evaler.getProperty(evaler.globalObject, 'String'), 'prototype');
     evaler.setProperty(stringPrototype, 'padStart', evaler.createNativeFunction(function (this: jsinterpreter.JSObject, maxLength: number, fillString?: string) { return (this.data as string).padStart(maxLength, fillString); }));

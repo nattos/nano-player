@@ -13,3 +13,4 @@ export const INDEXED_FILES_PATTERN = /^.*\.(mp3|flac|m4a|wav|aif[f]?|mov|mp[e]?g
 export const COVER_ART_FILE_PATTERN = /^(cover|jacket|folder)\.(jp[e]?g|png|bmp)$/;
 export const FILE_INDEXER_PARALLEL_COUNT = 8;
 export const PROGRAMMATIC_SCROLL_DURATION = 1000;
+export const TRANSCODE_WORKER_COUNT = 4;

@@ -111,9 +111,13 @@ export class BatchedProducerConsumerFlow<T> {
   }
 }
 
+class Terminated {}
+
 export class AsyncProducerConsumerQueue<T> {
   private readonly queued: T[] = [];
   private readonly flag = new WaitableFlag();
+  private readonly endOfQueue = new WaitableFlag();
+  private terminated = false;
 
   add(value: T) {
     this.queued.push(value);
@@ -125,11 +129,48 @@ export class AsyncProducerConsumerQueue<T> {
     this.flag.set();
   }
 
-  async pop(): Promise<T> {
-    while (this.queued.length <= 0) {
-      await this.flag.wait();
+  async join() {
+    while (this.queued.length > 0) {
+      await this.endOfQueue.wait();
     }
-    return this.queued.splice(0, 1)[0];
+  }
+
+  terminate() {
+    this.terminated = true;
+    this.flag.set();
+  }
+
+  async pop(): Promise<T> {
+    const result = await this.popOrTerminateInternal();
+    if (result === Terminated) {
+      throw new Error('Queue was terminated.');
+    }
+    return result as T;
+  }
+
+  async popOrTerminate(): Promise<T|undefined> {
+    const result = await this.popOrTerminateInternal();
+    if (result === Terminated) {
+      return undefined;
+    }
+    return result as T;
+  }
+
+  private async popOrTerminateInternal(): Promise<T|typeof Terminated> {
+    while (this.queued.length <= 0) {
+      if (this.terminated) {
+        return Terminated;
+      }
+      await this.flag.wait();
+      if (this.terminated) {
+        return Terminated;
+      }
+    }
+    const result = this.queued.splice(0, 1)[0];
+    if (this.queued.length === 0) {
+      this.endOfQueue.set();
+    }
+    return result;
   }
 }
 
@@ -279,6 +320,16 @@ export function filePathFileNameWithoutExtension(path: string): string {
   return fileName.slice(0, splitIndex);
 }
 
+export function filePathChangeExt(path: string, newExt: string): string {
+  if (newExt && !newExt.startsWith('.')) {
+    newExt = '.' + newExt;
+  }
+  const directory = filePathDirectory(path);
+  const fileName = filePathFileNameWithoutExtension(path);
+  const newFileName = fileName + newExt;
+  return filePathCombine(directory, newFileName);
+}
+
 export function filePathExtension(path: string): string {
   const fileName = filePathFileName(path);
   const splitIndex = fileName.lastIndexOf('.');
@@ -286,6 +337,32 @@ export function filePathExtension(path: string): string {
     return '';
   }
   return fileName.slice(splitIndex + 1);
+}
+
+export function filePathResolveAbsPath(path: string, relativeTo: string): string {
+  let initialAbsPath: string;
+  if (path.startsWith('/')) {
+    initialAbsPath = path;
+  } else {
+    initialAbsPath = relativeTo + '/' + path;
+  }
+  const pathParts = initialAbsPath.split('/');
+  const resolvedPartsStack: string[] = [];
+  for (const part of pathParts) {
+    if (part === '' || part === '.') {
+      continue;
+    }
+    if (part === '..' && resolvedPartsStack.length > 0) {
+      resolvedPartsStack.pop();
+      continue;
+    }
+    resolvedPartsStack.push(part);
+  }
+  return '/' + resolvedPartsStack.join('/');
+}
+
+export function filePathCombine(...parts: string[]): string {
+  return parts.filter(part => part.length > 0).join('/');
 }
 
 export async function getSubpathDirectory(directory: PathsDirectoryHandle, subpath: string): Promise<PathsDirectoryHandle|undefined> {

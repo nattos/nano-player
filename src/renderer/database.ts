@@ -951,8 +951,21 @@ export class Database {
     return filePath;
   }
 
+  static getAbsPathFilePath(path: string) {
+    const [sourceKey, filePath] = Database.getPathParts(path);
+    if (sourceKey === ROOT_SOURCE_KEY) {
+      return filePath;
+    }
+    // throw new Error('Not available');
+    return '/' + filePath;
+  }
+
   public static makePath(sourceKey: string, filePathParts: string[]) {
-    return sourceKey + '|' + filePathParts.join('/');
+    let filePath = filePathParts.join('/');
+    if (sourceKey === ROOT_SOURCE_KEY && !filePath.startsWith('/')) {
+      filePath = '/' + filePath;
+    }
+    return sourceKey + '|' + filePath;
   }
 
   private static getPathParts(path: string): [sourceKey: string, filePath: string] {

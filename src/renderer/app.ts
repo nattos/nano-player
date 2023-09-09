@@ -25,6 +25,7 @@ import { ImageCache } from './ImageCache';
 import { getBrowserWindow } from './renderer-ipc';
 import { EvalParams, createEvaluator, createTrackEvaluator } from './code-eval';
 import { PathsDirectoryHandle, PathsHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
+import { FileStatus, TranscodeOperation, TranscodeOutput, UserConfirmationState } from './transcode-operation';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -1326,6 +1327,56 @@ export class NanoApp extends LitElement {
     this.transcodeOperation.code = this.transcodeCodeInputElement?.value ?? '';
   }
 
+  @action
+  private transcodeToggleConfirm(transcodeOutput: TranscodeOutput) {
+    const canAccept = this.transcodeCanAcceptOutput(transcodeOutput);
+    const oldState = transcodeOutput.userOptions.userConfirmation;
+    let newState: UserConfirmationState;
+    switch (oldState) {
+      default:
+      case UserConfirmationState.Default:
+        newState = canAccept ? UserConfirmationState.Accepted : UserConfirmationState.Rejected;
+        break;
+      case UserConfirmationState.Accepted:
+        newState = UserConfirmationState.Rejected;
+        break;
+      case UserConfirmationState.Rejected:
+        newState = UserConfirmationState.Default;
+        break;
+    }
+    transcodeOutput.userOptions.userConfirmation = newState;
+  }
+
+  @action
+  private transcodeToggleAllConfirm() {
+    if (!this.transcodeOperation) {
+      return;
+    }
+    const allOutputs = this.transcodeOperation.outputs;
+    const acceptableOutputs = allOutputs.filter(output => this.transcodeCanAcceptOutput(output));
+    const cannotAcceptOutputs = allOutputs.filter(output => !this.transcodeCanAcceptOutput(output));
+    const allAccepted = acceptableOutputs.every(output => output.userOptions.userConfirmation === UserConfirmationState.Accepted);
+    const allRejected = allOutputs.every(output => output.userOptions.userConfirmation === UserConfirmationState.Rejected);
+    for (const output of acceptableOutputs) {
+      output.userOptions.userConfirmation =
+          allAccepted ? UserConfirmationState.Rejected :
+          allRejected ? UserConfirmationState.Default :
+          UserConfirmationState.Accepted;
+    }
+    for (const output of cannotAcceptOutputs) {
+      output.userOptions.userConfirmation =
+          allRejected ? UserConfirmationState.Default :
+          UserConfirmationState.Rejected;
+    }
+  }
+
+  private transcodeCanAcceptOutput(transcodeOutput: TranscodeOutput) {
+    const canAccept =
+        transcodeOutput.outputFileStatus === FileStatus.CanCreate ||
+        transcodeOutput.outputFileStatus === FileStatus.ExistsCanOverwrite;
+    return canAccept;
+  }
+
   private renderAutorunDisposer = () => {};
   private renderAutorunDirty = true;
   private renderIsInRender = false;
@@ -1408,6 +1459,10 @@ export class NanoApp extends LitElement {
         // TODO: Debug remove.
         if (!this.transcodeOperation) {
           this.transcodeOperation = new TranscodeOperation(Array.from(utils.filterNulllike(this.tracksInView.slice(73, 83))));
+          if (this.transcodeCodeInputElement) {
+            this.transcodeCodeInputElement.value = 'filePathChangeExt(fileName, \'mp3\')';
+            this.transcodeUpdateCode();
+          }
         }
 
 
@@ -1806,6 +1861,12 @@ export class NanoApp extends LitElement {
 .small-button simple-icon {
   margin: auto;
 }
+simple-icon.green {
+  color: green;
+}
+simple-icon.red {
+  color: red;
+}
 
 .query-container {
   position: absolute;
@@ -2115,6 +2176,18 @@ input {
 </div>
 `;
     } else if (this.overlay === Overlay.TranscodeBegin) {
+      const transcodeAllUserConfirmation =
+          this.transcodeOperation?.outputs?.every(output => output.userOptions.userConfirmation === UserConfirmationState.Accepted) ? UserConfirmationState.Accepted :
+          this.transcodeOperation?.outputs?.every(output => output.userOptions.userConfirmation === UserConfirmationState.Rejected) ? UserConfirmationState.Rejected :
+          undefined;
+      const transcodeAllFileStatus =
+          this.transcodeOperation?.outputs?.every(output => output.outputFileStatus === FileStatus.CanCreate) ? FileStatus.CanCreate :
+          this.transcodeOperation?.outputs?.every(output => output.outputFileStatus === FileStatus.ExistsCanOverwrite) ? FileStatus.ExistsCanOverwrite :
+          this.transcodeOperation?.outputs?.every(output => output.outputFileStatus === FileStatus.ExistsCannotOverwrite) ? FileStatus.ExistsCannotOverwrite :
+          undefined;
+      const isComplete = this.transcodeOperation?.isComplete;
+      const wasAnyError = this.transcodeOperation?.outputs?.some(output => output.userOptions.isError);
+
       return html`
 <div class="dialog">
   <div class="dialog-close-button small-button click-target" @click=${this.closeOverlay}>
@@ -2125,13 +2198,86 @@ input {
     <div>MP3</div>
     <div>Bitrate 320kbps CBR</div>
     <div>Code <input id="transcode-code-input" class="code" @input=${this.transcodeUpdateCode} style="width: 60em;height: 10em;"></input></div>
-    <div>
-      <div>Example input</div>
-      <div class="code">${JSON.stringify(this.transcodeOperation?.inputs?.at(0), null, 2)}</div>
-    </div>
-    <div>
-      <div>Example outputs<div>
-      ${this.transcodeOperation?.outputs?.map(output => html`<div class="code">${output}</div>`)}
+    <div style="display:grid;grid-auto-flow:column;grid-auto-columns:50% 50%;">
+      <div style="overflow: scroll">
+        <div>Example input</div>
+        <div class="code">${JSON.stringify(this.transcodeOperation?.inputs?.at(0)?.codeInputs, null, 2)}</div>
+      </div>
+      <div style="overflow:scroll;">
+        <div style="position:relative;">
+          <div style=${styleMap({
+            'position': 'absolute',
+            'left': '0',
+            'top': '0',
+            'bottom': '0',
+            'width': `${(this.transcodeOperation?.completionFraction ?? 0) * 100}%`,
+            'background-color': isComplete && wasAnyError ? 'red' : 'green',
+            'z-index': '0',
+          })}}></div>
+          <div style="display:flex;align-items:center;position:relative;z-index:1;">
+            <div @click=${() => this.transcodeOperation!.launchJob()}>Example outputs</div>
+            <div>
+              <simple-icon
+                  class=${classMap({
+                      'small-button': true,
+                      'click-target': true,
+                      'green': transcodeAllUserConfirmation === UserConfirmationState.Accepted,
+                      'red': transcodeAllUserConfirmation === UserConfirmationState.Rejected,
+                  })}
+                  icon=${
+                      transcodeAllUserConfirmation === UserConfirmationState.Accepted ? 'check-circle' :
+                      transcodeAllUserConfirmation === UserConfirmationState.Rejected ? 'minus-circle' :
+                      transcodeAllFileStatus === FileStatus.CanCreate ? 'check-circle' :
+                      transcodeAllFileStatus === FileStatus.ExistsCanOverwrite ? 'question-circle' :
+                      transcodeAllFileStatus === FileStatus.ExistsCannotOverwrite ? 'exclamation-circle' :
+                      'question-circle'
+                  }
+                  @click=${() => this.transcodeToggleAllConfirm()}
+                  >
+              </simple-icon>
+            </div>
+          </div>
+        </div>
+        <div>
+        ${this.transcodeOperation?.error ?
+          html`<div class="code">${this.transcodeOperation?.error}</div>` :
+          this.transcodeOperation?.outputs?.map(output => html`
+          <div style="position:relative;">
+            <div style=${styleMap({
+              'position': 'absolute',
+              'left': '0',
+              'top': '0',
+              'bottom': '0',
+              'width': `${output.userOptions.completionFraction * 100}%`,
+              'background-color': output.userOptions.isError ? 'red' : 'green',
+              'z-index': '0',
+            })}}></div>
+            <div style="display:flex;align-items:center;position:relative;z-index:1;">
+              <div class="code">${output.error ?? output.outputAbsFilePath}</div>
+              <div>
+                <simple-icon
+                    class=${classMap({
+                        'small-button': true,
+                        'click-target': true,
+                        'green': output.userOptions.userConfirmation === UserConfirmationState.Accepted,
+                        'red': output.userOptions.userConfirmation === UserConfirmationState.Rejected,
+                    })}
+                    icon=${
+                        output.userOptions.userConfirmation === UserConfirmationState.Accepted ? 'check-circle' :
+                        output.userOptions.userConfirmation === UserConfirmationState.Rejected ? 'minus-circle' :
+                        output.outputFileStatus === FileStatus.CanCreate ? 'check-circle' :
+                        output.outputFileStatus === FileStatus.ExistsCanOverwrite ? 'question-circle' :
+                        output.outputFileStatus === FileStatus.ExistsCannotOverwrite ? 'exclamation-circle' :
+                        'question-circle'
+                    }
+                    @click=${() => this.transcodeToggleConfirm(output)}
+                    >
+                </simple-icon>
+              </div>
+            </div>
+          </div>`)
+        }
+      </div>
     </div>
   </div>
 </div>
@@ -2234,67 +2380,6 @@ input {
     }
   }
 }
-
-class TranscodeOperation {
-  @observable code: string = '';
-  readonly inputs: EvalParams[];
-  @observable.shallow outputs: string[] = [];
-
-  private updateCodeEpoch = 0;
-  private readonly updateQueue = new utils.OperationQueue();
-
-  constructor(public readonly inputTracks: Track[]) {
-    makeObservable(this);
-    observe(this, 'code', this.updateOutputs.bind(this));
-
-    let listIndex = 0;
-    let listCount = this.inputTracks.length;
-    this.inputs = this.inputTracks.map(track => {
-      const input: EvalParams = {
-        'listIndex': listIndex++,
-        'listCount': listCount,
-        'track': track,
-      };
-      return input;
-    });
-  }
-
-  private updateOutputs() {
-    const thisEpoch = ++this.updateCodeEpoch;
-    setTimeout(() => {
-      if (thisEpoch !== this.updateCodeEpoch) {
-        return;
-      }
-      this.updateQueue.push(() => {
-        if (thisEpoch !== this.updateCodeEpoch) {
-          return;
-        }
-        this.doUpdateOutputs();
-      });
-    }, 500);
-  }
-
-  private async doUpdateOutputs() {
-    const results: string[] = [];
-
-    const compileResult = createEvaluator(this.code);
-    if (compileResult.error) {
-      results.push(compileResult.error);
-    } else {
-      for (const input of this.inputs) {
-        const result = compileResult.func?.(input);
-        results.push(result?.error ?? result?.value?.toString() ?? '<undefined>');
-        // TODO: Improve heuristic.
-        await utils.sleep(0);
-      }
-    }
-    runInAction(() => {
-      this.outputs = results;
-    });
-  }
-}
-
-
 
 function getChipLabel(c: CandidateCompletion): string|undefined {
   if (c.forCommand?.chipLabel) {
