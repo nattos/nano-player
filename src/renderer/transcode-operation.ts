@@ -1,30 +1,12 @@
-import { html, css, LitElement, PropertyValueMap } from 'lit';
 import {} from 'lit/html';
-import { customElement, query, property } from 'lit/decorators.js';
-import { classMap } from 'lit/directives/class-map.js';
-import { styleMap } from 'lit/directives/style-map.js';
-import { action, autorun, runInAction, observable, observe, makeObservable } from 'mobx';
-import { RecyclerView } from './recycler-view';
-import { CandidateCompletion, CommandParser, CommandResolvedArg, CommandSpec } from './command-parser';
+import { runInAction, observable, observe, makeObservable } from 'mobx';
 import * as utils from '../utils';
 import * as constants from './constants';
-import * as fileUtils from './file-utils';
-import * as environment from './environment';
-import { TrackView, TrackViewHost } from './track-view';
-import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
-import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
-import { Track, SortContext } from './schema';
-import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, ResolvedSubpathInLibraryPath, SearchResultStatus } from './database';
-import { MediaIndexer } from './media-indexer';
-import { TrackCursor } from './track-cursor';
-import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
-import { Playlist, PlaylistManager } from './playlist-manager';
-import { Selection, SelectionMode } from './selection';
-import { ImageCache } from './ImageCache';
-import { getBrowserWindow } from './renderer-ipc';
-import { EvalParams, createEvaluator, createTrackEvaluator } from './code-eval';
-import { PathsDirectoryHandle, PathsHandle, createUrl, getHandleFromAbsPath, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
+import { Track } from './schema';
+import { Database } from './database';
+import { EvalParams, createEvaluator } from './code-eval';
+import { getHandleFromAbsPath } from './paths';
 
 export interface TranscodeInput {
   track: Track;

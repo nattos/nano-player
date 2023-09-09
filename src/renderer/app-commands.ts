@@ -342,11 +342,19 @@ export function getCommands(app: NanoApp) {
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doShowSelectionInFileBrowser, app),
                     }),
+                    ifElectron({
+                      // cmd:selection transcode
+                      name: 'Transcode',
+                      desc: 'Converts a file from one format to another',
+                      atomPrefix: 'transcode',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doSelectionTranscode, app),
+                    }),
                     // cmd:selection play-after
                     // cmd:selection sort
                     // cmd:selection reindex
                     // cmd:selection info
-                    // cmd:selection convert
                     // cmd:selection search-similar
                   ],
                 },

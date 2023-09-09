@@ -791,6 +791,19 @@ export class NanoApp extends LitElement {
     browserWindow?.showFileInBrowser('/' + track.filePath);
   }
 
+  @action
+  async doSelectionTranscode() {
+    const tracks = Array.from(utils.filterNulllike(await this.fetchSelectionTracks()));
+    this.transcodeOperation = new TranscodeOperation(tracks);
+    this.overlay = Overlay.TranscodeBegin;
+    setTimeout(() => {
+      if (this.transcodeCodeInputElement) {
+        this.transcodeCodeInputElement.value = 'filePathChangeExt(fileName, \'mp3\')';
+        this.transcodeUpdateCode();
+      }
+    });
+  }
+
   // Fetches a single track by index from the track view context.
   async fetchTrack(index: number): Promise<Track|undefined> {
     const op = this.trackViewCursor!.peekRegion(index, index, true);
@@ -805,6 +818,14 @@ export class NanoApp extends LitElement {
       return track;
     }
     return undefined;
+  }
+
+  async fetchSelectionTracks(): Promise<Array<Track|undefined>> {
+    const pathPromises: Array<Promise<Track|undefined>> = [];
+    for (const index of this.selection.all) {
+      pathPromises.push(this.fetchTrack(index));
+    }
+    return await Promise.all(pathPromises);
   }
 
   private updateAnchorForTrackView() {
@@ -1457,7 +1478,7 @@ export class NanoApp extends LitElement {
 
 
         // TODO: Debug remove.
-        if (!this.transcodeOperation) {
+        if (!this.transcodeOperation && this.overlay === Overlay.TranscodeBegin) {
           this.transcodeOperation = new TranscodeOperation(Array.from(utils.filterNulllike(this.tracksInView.slice(73, 83))));
           if (this.transcodeCodeInputElement) {
             this.transcodeCodeInputElement.value = 'filePathChangeExt(fileName, \'mp3\')';
@@ -2197,7 +2218,7 @@ input {
   <div class="dialog-content">
     <div>MP3</div>
     <div>Bitrate 320kbps CBR</div>
-    <div>Code <input id="transcode-code-input" class="code" @input=${this.transcodeUpdateCode} style="width: 60em;height: 10em;"></input></div>
+    <div><input id="transcode-code-input" class="code" @input=${this.transcodeUpdateCode} style="width: 60em;height: 10em;"></input></div>
     <div style="display:grid;grid-auto-flow:column;grid-auto-columns:50% 50%;">
       <div style="overflow: scroll">
         <div>Example input</div>
