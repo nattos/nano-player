@@ -14,8 +14,8 @@ export class ImageCache {
   }
   private static instanceField?: ImageCache;
 
-  // TODO: For now, a queue of 1.
   private cachedImages = new utils.LruCache<string, string>(constants.IMAGE_CACHE_SIZE, this.evicted.bind(this));
+  private imageFetchesInFlight = new Map<string, Promise<string|undefined>>();
 
   async getImageUrl(artworkRef: ArtworkRef): Promise<string|undefined> {
     const cachedFromImageFileAtPath = artworkRef.fromImageFileAtPath && this.cachedImages.get(artworkRef.fromImageFileAtPath);
@@ -28,14 +28,31 @@ export class ImageCache {
     }
     await Database.instance.waitForLoad();
 
-    let result: string|undefined = undefined;
     let loadedPath = '';
+    let loadFunc: (() => Promise<string|undefined>)|undefined = undefined;
     if (artworkRef.fromImageFileAtPath) {
       loadedPath = artworkRef.fromImageFileAtPath;
-      result = await this.loadImageFile(loadedPath);
+      loadFunc = () => this.loadImageFile(loadedPath);
     } else if (artworkRef.fromImageInFileMetadataAtPath) {
       loadedPath = artworkRef.fromImageInFileMetadataAtPath;
-      result = await this.loadCoverArtFromMetadata(loadedPath);
+      loadFunc = () => this.loadCoverArtFromMetadata(loadedPath);
+    }
+    if (!loadFunc) {
+      return undefined;
+    }
+
+    const alreadyInFlight = this.imageFetchesInFlight.get(loadedPath);
+    let result: string|undefined = undefined;
+    if (alreadyInFlight) {
+      result = await alreadyInFlight;
+    } else {
+      const fetch = loadFunc();
+      this.imageFetchesInFlight.set(loadedPath, fetch);
+      try {
+        result = await fetch;
+      } finally {
+        this.imageFetchesInFlight.delete(loadedPath);
+      }
     }
     if (result === undefined) {
       return undefined;
