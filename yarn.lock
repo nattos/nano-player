@@ -3137,10 +3137,14 @@ fd-slicer@~1.1.0:
   dependencies:
     pend "~1.2.0"
 
-ffmpeg@^0.0.4:
+"ffmpeg@file:../ffmpeg":
   version "0.0.4"
-  resolved "https://registry.yarnpkg.com/ffmpeg/-/ffmpeg-0.0.4.tgz#1c460df8e7da5127f62ceef4bfa06c59c89630cb"
-  integrity sha512-3TgWUJJlZGQn+crJFyhsO/oNeRRnGTy6GhgS98oUCIfZrOW5haPPV7DUfOm3xJcHr5q3TJpjk2GudPutrNisRA==
+  dependencies:
+    when ">= 0.0.1"
+
+ffmpeg@nattos/node-ffmpeg:
+  version "0.0.4"
+  resolved "https://codeload.github.com/nattos/node-ffmpeg/tar.gz/e6c0ddf3c6e356c8ef956a6c870a2ebdfeafc3f7"
   dependencies:
     when ">= 0.0.1"
 
@@ -4037,10 +4041,9 @@ jsesc@~0.5.0:
   resolved "https://registry.yarnpkg.com/jsesc/-/jsesc-0.5.0.tgz#e7dee66e35d6fc16f710fe91d5cf69f70f08911d"
   integrity sha512-uZz5UnB7u4T9LvwmFqXii7pZSouaRPorGs5who1Ip7VO0wxanFvBL7GkM6dTHlgX+jhBApRetaWpnDabOeTcnA==
 
-jsmediatags@^3.9.7:
+jsmediatags@nattos/jsmediatags#no_node:
   version "3.9.7"
-  resolved "https://registry.yarnpkg.com/jsmediatags/-/jsmediatags-3.9.7.tgz#808c6713b5ccb9712a4dc4b2149a0cb253c641a2"
-  integrity sha512-xCAO8C3li3t5hYkXqn8iv8zQQUB4T1QqRN2aSONHMls21ICdEvXi4xtb6W70/fAFYSDwMHd32hIqvo4YuXoNcQ==
+  resolved "https://codeload.github.com/nattos/jsmediatags/tar.gz/60da576af909ff9cb0ad33404109e3854d36a918"
   dependencies:
     xhr2 "^0.1.4"
 

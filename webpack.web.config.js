@@ -23,7 +23,6 @@ module.exports = [
     resolve: {
       extensions: ['.tsx', '.ts', '.js'],
       alias: {
-        jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
         'js-interpreter': 'js-interpreter/lib/js-interpreter.min.js',
         'ffmpeg': false,
       },

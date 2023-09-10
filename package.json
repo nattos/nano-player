@@ -38,8 +38,6 @@
     "webpack-dev-server": "^4.15.1"
   },
   "dependencies": {
-    "ffmpeg": "file:../ffmpeg",
-    "jsmediatags": "file:../jsmediatags",
     "@babel/preset-env": "^7.22.14",
     "@babel/standalone": "^7.22.14",
     "@types/babel__standalone": "^7.1.4",
@@ -48,9 +46,11 @@
     "appdmg": "^0.6.6",
     "electron-settings": "^4.0.2",
     "electron-squirrel-startup": "^1.0.0",
+    "ffmpeg": "nattos/node-ffmpeg",
     "fs": "^0.0.1-security",
     "fs-xattr": "^0.4.0",
     "js-interpreter": "^5.0.0",
+    "jsmediatags": "nattos/jsmediatags#no_node",
     "line-awesome": "^1.3.0",
     "node-fs": "^0.1.7",
     "nodemon": "^3.0.1",
