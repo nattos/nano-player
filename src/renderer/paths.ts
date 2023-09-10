@@ -30,18 +30,34 @@ export interface FileStats {
 export async function getHandleFromAbsPath(absPath: string): Promise<PathsHandle|undefined> {
   if (environment.isElectron()) {
     const fs = await lazyFs();
-    const stats = (await fs!.promises.stat(absPath));
-    const isFile = stats.isFile();
-    const isDirectory = stats.isDirectory();
-    if (isDirectory) {
-      return new FsDirectoryHandle(absPath);
-    } else if (isFile) {
-      return new FsFileHandle(absPath);
-    } else {
-      return undefined;
+    try {
+      const stats = (await fs!.promises.stat(absPath));
+      const isFile = stats.isFile();
+      const isDirectory = stats.isDirectory();
+      if (isDirectory) {
+        return new FsDirectoryHandle(absPath);
+      } else if (isFile) {
+        return new FsFileHandle(absPath);
+      } else {
+        return undefined;
+      }
+    } catch (e) {
+      if ((e as any)?.code === 'ENOENT') {
+        return undefined;
+      }
+      throw e;
     }
   }
   return undefined;
+}
+
+export async function createDirectoryFromAbsPath(absPath: string): Promise<PathsDirectoryHandle> {
+  if (!environment.isElectron()) {
+    throw new Error('Not supported');
+  }
+  const fs = await lazyFs();
+  await fs!.promises.mkdir(absPath, { recursive: true });
+  return new FsDirectoryHandle(absPath);
 }
 
 export async function statFileHandle(handle: PathsHandle): Promise<FileStats> {
@@ -83,9 +99,6 @@ export async function showDirectoryPicker(): Promise<PathsDirectoryHandle|undefi
   if (environment.isElectron()) {
     let path = await getBrowserWindow()?.showDirectoryPicker();
     if (path) {
-      if (!path.endsWith('/')) {
-        path += '/';
-      }
       return new FsDirectoryHandle(path);
     }
     return undefined;
@@ -178,6 +191,9 @@ class FsDirectoryHandle extends FsHandle implements PathsDirectoryHandle {
   override kind: PathsType = 'directory';
 
   constructor(absPath: string) {
+    if (!absPath.endsWith('/')) {
+      absPath += '/';
+    }
     super(absPath);
   }
 
@@ -188,16 +204,13 @@ class FsDirectoryHandle extends FsHandle implements PathsDirectoryHandle {
       const childAbsPath = this.absPath + file;
       const isDirectory = (await fs!.promises.stat(childAbsPath)).isDirectory();
       if (isDirectory) {
-        yield new FsDirectoryHandle(childAbsPath + '/');
+        yield new FsDirectoryHandle(childAbsPath);
       } else {
         yield new FsFileHandle(childAbsPath);
       }
     }
   }
   async getDirectoryHandle(name: string): Promise<PathsDirectoryHandle> {
-    if (!name.endsWith('/')) {
-      name += '/';
-    }
     return new FsDirectoryHandle(this.absPath + name);
   }
   async getFileHandle(name: string): Promise<PathsFileHandle> {

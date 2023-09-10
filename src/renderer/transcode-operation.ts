@@ -2,11 +2,14 @@ import {} from 'lit/html';
 import { runInAction, observable, observe, makeObservable } from 'mobx';
 import * as utils from '../utils';
 import * as constants from './constants';
+import * as environment from './environment';
 import './simple-icon-element';
 import { Track } from './schema';
 import { Database } from './database';
 import { EvalParams, createEvaluator } from './code-eval';
-import { getHandleFromAbsPath } from './paths';
+import { createDirectoryFromAbsPath, getHandleFromAbsPath } from './paths';
+
+const lazyFfmpeg = utils.lazyOr(async () => environment.isElectron() ? await import('ffmpeg') : undefined);
 
 export interface TranscodeInput {
   track: Track;
@@ -66,7 +69,7 @@ export class TranscodeOperation {
     let listIndex = 0;
     let listCount = this.inputTracks.length;
     this.inputs = this.inputTracks.map(track => {
-      const inputAbsFilePath = Database.getAbsPathFilePath(track.filePath);
+      const inputAbsFilePath = Database.getAbsPathFilePath(track.path);
       const input: EvalParams = {
         'listIndex': listIndex++,
         'listCount': listCount,
@@ -115,7 +118,7 @@ export class TranscodeOperation {
       for (const input of this.inputs) {
         let localError: string|undefined;
         const track = input.track;
-        const inputAbsFilePath = Database.getAbsPathFilePath(track.filePath);
+        const inputAbsFilePath = Database.getAbsPathFilePath(track.path);
         const output: TranscodeOutput = {
           input: track,
           inputAbsFilePath: inputAbsFilePath,
@@ -194,15 +197,29 @@ export class TranscodeOperation {
             }
             let isError = false;
             try {
+              const ffmpeg = (await lazyFfmpeg())!;
+              const video = await new ffmpeg.default(toProcess.inputAbsFilePath);
+              video.fnExtractSoundToMP3;
+              video.setDisableVideo();
+              video.setAudioBitRate(320);
+              video.addCommand('-y', undefined as unknown as string);
+              video.addCommand('-f', 'mp3');
+
+              // TODO: Create path.
+              const outputDir = utils.filePathDirectory(toProcess.outputAbsFilePath!);
+              createDirectoryFromAbsPath(outputDir);
+              const saveOp = video.save(toProcess.outputAbsFilePath!);
+
+              const updateRate = 0.1;
+              let elapsedTime = 0;
+              let duration = Math.max(60, toProcess.input.metadata?.duration ?? 0);
               while (true) {
-                await utils.sleep(100);
-                const newFraction = toProcess.userOptions.completionFraction + Math.random() * 0.1 + 0.1;
-                if (Math.random() < 0.05) {
-                  throw new Error('Fake error!!!');
-                }
-                if (newFraction > 1) {
+                const isDone = await Promise.race([saveOp, utils.sleep(updateRate * 1000).then(() => false)]);
+                if (isDone !== false) {
                   break;
                 }
+                elapsedTime += updateRate;
+                const newFraction = Math.atan(elapsedTime * 200.0 / duration) / Math.PI * 2;
                 runInAction(() => {
                   toProcess.userOptions.completionFraction = newFraction;
                   updateTotalState();

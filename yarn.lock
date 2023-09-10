@@ -1477,6 +1477,11 @@
     "@types/qs" "*"
     "@types/serve-static" "*"
 
+"@types/ffmpeg@^1.0.4":
+  version "1.0.4"
+  resolved "https://registry.yarnpkg.com/@types/ffmpeg/-/ffmpeg-1.0.4.tgz#e82c080f7846de13e17bf0a2d49dd841651b8686"
+  integrity sha512-USbiJIZRuoO1n/HUTkxCPH0hvjVUOLUbkicwbh+9GOjwg0IFZOU0aDVMJV0A27nC42Bx6rujunU6pfdjw866JQ==
+
 "@types/fs-extra@^9.0.1":
   version "9.0.13"
   resolved "https://registry.yarnpkg.com/@types/fs-extra/-/fs-extra-9.0.13.tgz#7594fbae04fe7f1918ce8b3d213f74ff44ac1f45"
@@ -3131,6 +3136,13 @@ fd-slicer@~1.1.0:
   integrity sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==
   dependencies:
     pend "~1.2.0"
+
+ffmpeg@^0.0.4:
+  version "0.0.4"
+  resolved "https://registry.yarnpkg.com/ffmpeg/-/ffmpeg-0.0.4.tgz#1c460df8e7da5127f62ceef4bfa06c59c89630cb"
+  integrity sha512-3TgWUJJlZGQn+crJFyhsO/oNeRRnGTy6GhgS98oUCIfZrOW5haPPV7DUfOm3xJcHr5q3TJpjk2GudPutrNisRA==
+  dependencies:
+    when ">= 0.0.1"
 
 filename-reserved-regex@^2.0.0:
   version "2.0.0"
@@ -6341,6 +6353,11 @@ whatwg-url@^5.0.0:
   dependencies:
     tr46 "~0.0.3"
     webidl-conversions "^3.0.0"
+
+"when@>= 0.0.1":
+  version "3.7.8"
+  resolved "https://registry.yarnpkg.com/when/-/when-3.7.8.tgz#c7130b6a7ea04693e842cdc9e7a1f2aa39a39f82"
+  integrity sha512-5cZ7mecD3eYcMiCH4wtRPA5iFJZ50BJYDfckI5RRpQiktMiYTcn0ccLTZOvcbBume+1304fQztxeNzNS9Gvrnw==
 
 which@^1.2.14, which@^1.2.9:
   version "1.3.1"

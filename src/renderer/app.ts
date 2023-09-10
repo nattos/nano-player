@@ -1471,24 +1471,6 @@ export class NanoApp extends LitElement {
             this.selection.select(newAnchor.index, oldSelectionTrack, SelectionMode.SetPrimary);
           }
         }
-
-
-
-
-
-
-        // TODO: Debug remove.
-        if (!this.transcodeOperation && this.overlay === Overlay.TranscodeBegin) {
-          this.transcodeOperation = new TranscodeOperation(Array.from(utils.filterNulllike(this.tracksInView.slice(73, 83))));
-          if (this.transcodeCodeInputElement) {
-            this.transcodeCodeInputElement.value = 'filePathChangeExt(fileName, \'mp3\')';
-            this.transcodeUpdateCode();
-          }
-        }
-
-
-
-
       }));
     }
     if (results.contextChanged) {
@@ -1714,6 +1696,11 @@ export class NanoApp extends LitElement {
   white-space: pre;
   font-family: Monaco, monospace;
   font-size: 80%;
+}
+
+.horizontal-divider {
+  background-color: var(--theme-color3);
+  height: 0.5px;
 }
 
 .window-title-bar {
@@ -2064,7 +2051,7 @@ input {
   height: 80%;
   display: grid;
   grid-auto-columns: 1fr auto;
-  grid-auto-rows: auto 1fr;
+  grid-auto-rows: max-content 1fr;
   background-color: var(--theme-bg2);
   pointer-events: auto;
 }
@@ -2083,6 +2070,9 @@ input {
 .dialog-content {
   grid-area: 2 / 1 / span 1 / span 2;
   margin-left: 0.25em;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 
@@ -2219,9 +2209,9 @@ input {
     <div>MP3</div>
     <div>Bitrate 320kbps CBR</div>
     <div><input id="transcode-code-input" class="code" @input=${this.transcodeUpdateCode} style="width: 60em;height: 10em;"></input></div>
-    <div style="display:grid;grid-auto-flow:column;grid-auto-columns:50% 50%;">
-      <div style="overflow: scroll">
-        <div>Example input</div>
+    <div style="display:grid;grid-auto-flow:column;grid-auto-columns:50% 50%;height:0px;flex-grow:1;">
+      <div style="overflow:scroll;">
+        <div>Input (${1}/${this.transcodeOperation?.inputs?.length})</div>
         <div class="code">${JSON.stringify(this.transcodeOperation?.inputs?.at(0)?.codeInputs, null, 2)}</div>
       </div>
       <div style="overflow:scroll;">
@@ -2236,7 +2226,7 @@ input {
             'z-index': '0',
           })}}></div>
           <div style="display:flex;align-items:center;position:relative;z-index:1;">
-            <div @click=${() => this.transcodeOperation!.launchJob()}>Example outputs</div>
+            <div style="flex-grow:1;width:0px;overflow:hidden;text-overflow:ellipsis;">Outputs</div>
             <div>
               <simple-icon
                   class=${classMap({
@@ -2274,7 +2264,7 @@ input {
               'z-index': '0',
             })}}></div>
             <div style="display:flex;align-items:center;position:relative;z-index:1;">
-              <div class="code">${output.error ?? output.outputAbsFilePath}</div>
+              <div class="code" style="flex-grow:1;width:0px;overflow:hidden;text-overflow:ellipsis;">${output.error ?? output.outputAbsFilePath}</div>
               <div>
                 <simple-icon
                     class=${classMap({
@@ -2296,8 +2286,18 @@ input {
                 </simple-icon>
               </div>
             </div>
-          </div>`)
-        }
+          </div>
+        `)}
+        </div>
+      </div>
+    </div>
+    <div class="horizontal-divider"></div>
+    <div style="display:flex;justify-content:flex-end;">
+      <div
+          class="small-button click-target"
+          style="width:fit-content;padding:1em 2em;flex-grow:0;"
+          @click=${() => this.transcodeOperation!.launchJob()}>
+        START
       </div>
     </div>
   </div>
