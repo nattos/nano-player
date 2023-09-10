@@ -7,15 +7,25 @@ import * as utils from '../utils';
 import './simple-icon-element';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
-import { Database } from './database';
+import { PointerDragOp } from './pointer-drag-op';
+
+export interface ListPos {
+  afterIndex: number;
+  beforeIndex: number;
+  closestExistingIndex: number;
+  isAtStart: boolean;
+  isAtEnd: boolean;
+}
 
 export interface TrackViewHost {
   doSelectTrackView(trackView: TrackView, mode: SelectionMode): void;
+  doSelectTrackIndex(index: number, mode: SelectionMode): void;
   doPlayTrackView(trackView: TrackView): void;
-  doPreviewMove(trackView: TrackView, delta: number): void;
+  doPreviewMove(trackView: TrackView, delta: number, isAbsolute: boolean): void;
   doAcceptMove(trackView: TrackView): void;
   doCancelMove(trackView: TrackView): void;
   doContextMenu(trackView: TrackView): void;
+  pagePointToListPos(pageX: number, pageY: number): ListPos;
 }
 
 interface ExtendedMetadata {
@@ -181,20 +191,86 @@ export class TrackView extends LitElement {
   host?: TrackViewHost;
 
   private extendedMetadata: ExtendedMetadata = {};
+  private rangeSelectOp?: PointerDragOp;
+  private dragMoveOp?: PointerDragOp;
+  private dragMoveDidStart = false;
 
-  clicked(e: MouseEvent) {
+  clicked(e: PointerEvent) {
     if (e.button !== 0) {
       return;
     }
+    const wasSelected = this.selected;
     let selectMode: SelectionMode;
+    let beginRangeSelect = false;
     if (e.metaKey || e.altKey) {
       selectMode = SelectionMode.Toggle;
     } else if (e.shiftKey) {
       selectMode = SelectionMode.SelectToRange;
     } else {
-      selectMode = SelectionMode.Select;
+      if (wasSelected) {
+        selectMode = SelectionMode.SetPrimary;
+      } else {
+        selectMode = SelectionMode.Select;
+      }
+      beginRangeSelect = true;
     }
     this.host?.doSelectTrackView(this, selectMode);
+
+    if (beginRangeSelect) {
+      if (wasSelected) {
+        if (this.showReorderControls) {
+          this.dragMoveOp?.dispose();
+          this.dragMoveDidStart = false;
+          this.dragMoveOp = new PointerDragOp(e, this, {
+            move: this.dragMovePreviewToPointer.bind(this),
+            accept: this.dragMoveAccept.bind(this),
+            cancel: this.dragMoveCancel.bind(this),
+          });
+        }
+      } else {
+        this.rangeSelectOp?.dispose();
+        this.rangeSelectOp = new PointerDragOp(e, this, {
+          move: this.rangeSelectToPointer.bind(this),
+        });
+      }
+    }
+  }
+
+  @action
+  rangeSelectToPointer(e: PointerEvent) {
+    if (!this.host) {
+      return;
+    }
+    const pos = this.host.pagePointToListPos(e.pageX, e.pageY);
+    this.host?.doSelectTrackIndex(pos.closestExistingIndex, SelectionMode.SelectToRange);
+  }
+
+  @action
+  dragMovePreviewToPointer(e: PointerEvent) {
+    if (!this.host) {
+      return;
+    }
+    const pos = this.host.pagePointToListPos(e.pageX, e.pageY);
+    if (pos.afterIndex !== this.index && pos.beforeIndex !== this.index) {
+      this.dragMoveDidStart = true;
+    }
+    if (this.dragMoveDidStart) {
+      this.host.doPreviewMove(this, pos.beforeIndex, true);
+    }
+  }
+
+  @action
+  dragMoveAccept() {
+    if (this.dragMoveDidStart) {
+      this.host?.doAcceptMove(this);
+    }
+  }
+
+  @action
+  dragMoveCancel() {
+    if (this.dragMoveDidStart) {
+      this.host?.doCancelMove(this);
+    }
   }
 
   @action
@@ -217,7 +293,7 @@ export class TrackView extends LitElement {
     if (e.button !== 0) {
       return;
     }
-    this.host?.doPreviewMove(this, -1);
+    this.host?.doPreviewMove(this, -1, false);
   }
 
   @action
@@ -225,7 +301,7 @@ export class TrackView extends LitElement {
     if (e.button !== 0) {
       return;
     }
-    this.host?.doPreviewMove(this, 1);
+    this.host?.doPreviewMove(this, 1, false);
   }
 
   @action
@@ -273,7 +349,7 @@ export class TrackView extends LitElement {
       'selected': this.selected,
       'highlighted': this.highlighted,
     })}
-    @mousedown=${this.clicked}
+    @pointerdown=${this.clicked}
     @dblclick=${this.dblclick}
     @contextmenu=${this.onContextMenu}>
   <div class="col-index">${this.playing ? '_' : ''}${this.index}</div>
@@ -294,6 +370,7 @@ export class TrackView extends LitElement {
     <div
         class="row-controls-container"
         @mousedown=${this.doStopPropagation}
+        @pointerdown=${this.doStopPropagation}
         @click=${this.doStopPropagation}
         @dblclick=${this.doStopPropagation}>
       <div class="row-controls-underlay"></div>

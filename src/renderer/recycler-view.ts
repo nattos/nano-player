@@ -72,6 +72,12 @@ export class RecyclerView<TElement extends HTMLElement, TData, TGroupElement ext
     return Array.from(this.elementsDisplayedMap.values());
   }
 
+  viewportPointToFineTrackIndex(x: number, y: number): number {
+    const scrollTop = this.scrollContainer.scrollTop;
+    const contentY = scrollTop + y;
+    return contentY / this.rowHeight;
+  }
+
   get insertMarkerPos(): number|undefined { return this.insertMarkerPosField; }
   set insertMarkerPos(index: number|undefined) {
     if (this.insertMarkerPosField === index) {

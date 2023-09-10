@@ -10,7 +10,7 @@ import * as utils from '../utils';
 import * as constants from './constants';
 import * as fileUtils from './file-utils';
 import * as environment from './environment';
-import { TrackView, TrackViewHost } from './track-view';
+import { ListPos, TrackView, TrackViewHost } from './track-view';
 import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
@@ -25,6 +25,7 @@ import { ImageCache } from './ImageCache';
 import { getBrowserWindow } from './renderer-ipc';
 import { PathsDirectoryHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
 import { FileStatus, TranscodeOperation, TranscodeOutput, UserConfirmationState } from './transcode-operation';
+import { PointerDragOp } from './pointer-drag-op';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -55,6 +56,7 @@ export class NanoApp extends LitElement {
   private didReadyTrackListView = false;
   readonly selection = new Selection<Track>();
   private previewMoveDelta = 0;
+  private previewMoveIsAbsolute = false;
   @observable private previewMoveInsertPos: number|null = null;
   private queuedPlaybackSource?: ListSource;
   private queuedPlaybackLocation?: number;
@@ -82,10 +84,12 @@ export class NanoApp extends LitElement {
         thisCapture.doPlayTrack(trackView.index, trackView.track);
       },
       doSelectTrackView: this.doSelectTrackView.bind(this),
+      doSelectTrackIndex: this.doSelectTrackIndex.bind(this),
       doPreviewMove: action(this.doMoveTrackPreviewMove.bind(this)),
       doAcceptMove: action(this.doMoveTrackAcceptMove.bind(this)),
       doCancelMove: action(this.clearMoveTracksPreview.bind(this)),
       doContextMenu: action(this.onContextMenuTrackView.bind(this)),
+      pagePointToListPos: this.pagePointToListPos.bind(this),
     };
     this.trackGroupViewHost = {
       doPlayTrackGroupView(groupView) {
@@ -724,6 +728,43 @@ export class NanoApp extends LitElement {
     return this.selection.any;
   }
 
+  pagePointToListPos(pageX: number, pageY: number): ListPos {
+    const clientRect = this.trackListView.getBoundingClientRect();
+    const maxIndex = Math.max(0, this.trackListView.totalCount - 1);
+    const viewportX = pageX - clientRect.left;
+    const viewportY = pageY - clientRect.left;
+    const fineIndex = this.trackListView.viewportPointToFineTrackIndex(viewportX, viewportY);
+    let closestIndex = Math.floor(fineIndex);
+    let afterIndex;
+    let beforeIndex;
+    let isAtStart = false;
+    let isAtEnd = false;
+    if (closestIndex < 0) {
+      closestIndex = 0;
+      afterIndex = -1;
+      beforeIndex = 0;
+      isAtStart = true;
+    } else if (closestIndex > maxIndex) {
+      closestIndex = maxIndex;
+      afterIndex = maxIndex;
+      beforeIndex = maxIndex + 1;
+      isAtEnd = true;
+    } else if (closestIndex > (fineIndex - 0.5)) {
+      afterIndex = closestIndex - 1;
+      beforeIndex = closestIndex;
+    } else {
+      afterIndex = closestIndex;
+      beforeIndex = closestIndex + 1;
+    }
+    return {
+      afterIndex: afterIndex,
+      beforeIndex: beforeIndex,
+      closestExistingIndex: closestIndex,
+      isAtStart: isAtStart,
+      isAtEnd: isAtEnd,
+    };
+  }
+
   @action
   doSelectTrackView(trackView: TrackView, mode: SelectionMode) {
     if (!trackView.track) {
@@ -734,12 +775,20 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  doMoveTrackPreviewMove(trackView: TrackView, delta: number): void {
-    this.previewMoveDelta += delta;
+  doSelectTrackIndex(index: number, mode: SelectionMode) {
+    this.selection.select(index, undefined, mode);
+  }
+
+  @action
+  doMoveTrackPreviewMove(trackView: TrackView, delta: number, isAbsolute: boolean): void {
+    this.previewMoveDelta = isAbsolute ? delta : (this.previewMoveDelta + delta);
+    this.previewMoveIsAbsolute = isAbsolute;
     let previewMoveInsertPos: number|undefined = undefined;
     const indicesToMove = Array.from(this.selection.all).sort((a, b) => a - b);
     if (indicesToMove.length > 0) {
-      if (this.previewMoveDelta > 0) {
+      if (isAbsolute) {
+        previewMoveInsertPos = this.previewMoveDelta;
+      } else if (this.previewMoveDelta > 0) {
         previewMoveInsertPos = indicesToMove[indicesToMove.length - 1] + this.previewMoveDelta + 1;
       } else if (this.previewMoveDelta < 0) {
         previewMoveInsertPos = indicesToMove[0] + this.previewMoveDelta;
@@ -758,7 +807,7 @@ export class NanoApp extends LitElement {
 
   @action
   doMoveTrackAcceptMove(trackView: TrackView): void {
-    this.doPlaylistMoveSelected(this.previewMoveDelta);
+    this.doPlaylistMoveSelected(this.previewMoveDelta, this.previewMoveIsAbsolute);
     this.previewMoveDelta = 0;
     this.previewMoveInsertPos = null;
   }
@@ -930,7 +979,7 @@ export class NanoApp extends LitElement {
         sortContext: resolvedSource.sortContext ?? null,
         index: nextIndex,
       };
-      this.cancelAudioSeek();
+      this.audioSeekOp?.dispose();
     });
 
     this.loadPlayingTrackImage();
@@ -1246,7 +1295,7 @@ export class NanoApp extends LitElement {
   }
 
   @action
-  async doPlaylistMoveSelected(delta: number) {
+  async doPlaylistMoveSelected(delta: number, isAbsolute: boolean) {
     const playlistKey = this.resolveSource(this.trackViewCursor!.source).secondary;
     if (playlistKey === undefined) {
       return;
@@ -1255,11 +1304,29 @@ export class NanoApp extends LitElement {
     if (toMoveIndexes.length === 0) {
       return;
     }
-    toMoveIndexes.sort((a, b) => a - b).reverse();
-    const minIndex = toMoveIndexes[toMoveIndexes.length - 1];
-    const maxIndex = toMoveIndexes[0];
+    toMoveIndexes.sort((a, b) => a - b);
+    const minIndex = toMoveIndexes[0];
+    const maxIndex = toMoveIndexes[toMoveIndexes.length - 1];
+    let insertAbsPos: number|undefined = undefined;
+    if (isAbsolute) {
+      if (delta <= minIndex) {
+        insertAbsPos = delta;
+      } else if (delta >= maxIndex) {
+        insertAbsPos = delta - toMoveIndexes.length;
+      } else {
+        insertAbsPos = delta;
+        for (const movedIndex of toMoveIndexes) {
+          if (movedIndex > delta) {
+            break;
+          }
+          insertAbsPos--;
+        }
+      }
+    }
+
     let insertMin = 0;
     let insertMax = 0;
+    toMoveIndexes.reverse();
     await PlaylistManager.instance.updatePlaylistWithCallback(playlistKey, (allEntries) => {
       const newPaths = allEntries.map(track => track.path);
       const toReinsert: string[] = [];
@@ -1270,8 +1337,11 @@ export class NanoApp extends LitElement {
         }
         toReinsert.push(removed);
       }
+      toReinsert.reverse();
       let insertIndex;
-      if (delta <= 0) {
+      if (insertAbsPos != undefined) {
+        insertIndex = insertAbsPos;
+      } else if (delta <= 0) {
         insertIndex = Math.max(0, Math.min(newPaths.length, minIndex + delta));
       } else {
         insertIndex = Math.max(0, Math.min(newPaths.length, maxIndex - toReinsert.length + 1 + delta));
@@ -1620,53 +1690,22 @@ export class NanoApp extends LitElement {
     }); });
   }
 
-  private isAudioSeeking = false;
-  private audioSeekingPointerId = 0;
+  private audioSeekOp?: PointerDragOp;
 
   @action
   private onAudioStartSeek(e: PointerEvent) {
-    if (this.isAudioSeeking || e.button !== 0) {
+    if (e.button !== 0) {
       return;
     }
-    this.isAudioSeeking = true;
-    this.audioSeekingPointerId = e.pointerId;
-    this.playerSeekbarElement.setPointerCapture(this.audioSeekingPointerId);
-    e.preventDefault()
-    window.addEventListener('pointermove', this.onAudioContinueSeek.bind(this));
-    window.addEventListener('pointerup', this.onAudioEndSeek.bind(this));
-    window.addEventListener('pointercancel', this.onAudioEndSeek.bind(this));
-    this.audioDoSeek(e.pageX);
+    this.audioSeekOp?.dispose();
+    this.audioSeekOp = new PointerDragOp(e, this.playerSeekbarElement, {
+      move: this.audioDoSeek.bind(this),
+      callMoveImmediately: true,
+    });
   }
 
-  @action
-  private onAudioContinueSeek(e: PointerEvent) {
-    if (!this.isAudioSeeking || e.pointerId !== this.audioSeekingPointerId) {
-      return;
-    }
-    this.audioDoSeek(e.pageX);
-  }
-
-  @action
-  private onAudioEndSeek(e: PointerEvent) {
-    if (!this.isAudioSeeking || e.pointerId !== this.audioSeekingPointerId) {
-      return;
-    }
-    this.cancelAudioSeek();
-  }
-
-  private cancelAudioSeek() {
-    if (!this.isAudioSeeking) {
-      return;
-    }
-    this.playerSeekbarElement.releasePointerCapture(this.audioSeekingPointerId);
-    this.isAudioSeeking = false;
-    console.log('onAudioEndSeek');
-    window.removeEventListener('pointermove', this.onAudioContinueSeek.bind(this));
-    window.removeEventListener('pointerup', this.onAudioEndSeek.bind(this));
-    window.removeEventListener('pointercancel', this.onAudioEndSeek.bind(this));
-  }
-
-  private audioDoSeek(pageX: number) {
+  private audioDoSeek(e: PointerEvent) {
+    const pageX = e.pageX;
     const clientRect = this.playerSeekbarElement.getBoundingClientRect();
     const fraction = (pageX - clientRect.left) / Math.max(1, clientRect.width);
     this.setPlayPosition(fraction);
