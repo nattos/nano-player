@@ -79,7 +79,7 @@ export class MediaIndexer {
   private async fileIndexerProc() {
     await Database.instance.waitForLoad();
 
-    const flow = new utils.BatchedProducerConsumerFlow<[PathsFileHandle, string[], LibraryPathEntry]>(16);
+    const flow = new utils.BatchedProducerConsumerFlow<[PathsFileHandle, string[], LibraryPathEntry]>(constants.MEDIA_INDEXER_FILE_BATCH_SIZE);
     flow.consume(async (entries) => {
       try {
         const toUpdatePaths: string[] = [];
@@ -115,19 +115,18 @@ export class MediaIndexer {
             ? fileUtils.enumerateFilesRec(await utils.getSubpathDirectory(handle as PathsDirectoryHandle, subpath))
             : [handle as PathsFileHandle];
         for await (const foundFile of filesIt) {
-          console.log(foundFile);
           const fileName = foundFile.name.toLocaleLowerCase();
           if (!constants.INDEXED_FILES_PATTERN.test(fileName)) {
-            console.log(`ignored: ${foundFile}`);
+            console.log(`ignored: ${foundFile.name}`);
             continue;
           }
 
           const resolvedLibraryPath = await Database.instance.resolveInLibraryPaths(foundFile);
           if (!resolvedLibraryPath.libraryPath || !resolvedLibraryPath.subpath) {
-            console.log(`not in library path: ${foundFile}`);
+            console.log(`not in library path: ${foundFile.name}`);
             continue;
           }
-          console.log(`adding: ${foundFile} in ${resolvedLibraryPath.libraryPath.path}`);
+          console.log(`adding: ${foundFile.name} in ${resolvedLibraryPath.libraryPath.path}`);
           flow.produce([foundFile, resolvedLibraryPath.subpath, resolvedLibraryPath.libraryPath]);
         }
 

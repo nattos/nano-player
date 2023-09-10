@@ -14,3 +14,4 @@ export const COVER_ART_FILE_PATTERN = /^(cover|jacket|folder)\.(jp[e]?g|png|bmp)
 export const FILE_INDEXER_PARALLEL_COUNT = 8;
 export const PROGRAMMATIC_SCROLL_DURATION = 1000;
 export const TRANSCODE_WORKER_COUNT = 4;
+export const MEDIA_INDEXER_FILE_BATCH_SIZE = 128;

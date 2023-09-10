@@ -3137,11 +3137,6 @@ fd-slicer@~1.1.0:
   dependencies:
     pend "~1.2.0"
 
-"ffmpeg@file:../ffmpeg":
-  version "0.0.4"
-  dependencies:
-    when ">= 0.0.1"
-
 ffmpeg@nattos/node-ffmpeg:
   version "0.0.4"
   resolved "https://codeload.github.com/nattos/node-ffmpeg/tar.gz/e6c0ddf3c6e356c8ef956a6c870a2ebdfeafc3f7"
