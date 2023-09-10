@@ -212,6 +212,30 @@ export class NanoApp extends LitElement {
           .concat(this.commandParser.parse('playlist:'))
           .concat(this.commandParser.parse('cmd:'));
     }
+
+    let backQuery = query.trimEnd();
+    if (backQuery.at(backQuery.length - 1) === ':') {
+      backQuery = backQuery.substring(0, backQuery.length - 1);
+    }
+    while (backQuery.length > 0) {
+      const lastChar = backQuery[backQuery.length - 1];
+      if (lastChar === ':' || lastChar.trim().length === 0) {
+        break;
+      }
+      backQuery = backQuery.substring(0, backQuery.length - 1);
+    }
+    backQuery = backQuery.trimEnd();
+
+    completions.push({
+      isComplete: false,
+      byCommand: {
+        name: 'back',
+        desc: 'back',
+        atomPrefix: '←',
+        argSpec: [],
+      },
+      resultQuery: backQuery,
+    });
     this.completions = completions;
 
     if (this.queryPreviewing?.forCommand && this.queryPreviewing?.resolvedArgs) {
@@ -229,7 +253,7 @@ export class NanoApp extends LitElement {
 
   @action
   private acceptQueryCompletion(completion: CandidateCompletion) {
-    if (completion.resultQuery) {
+    if (completion.resultQuery !== undefined) {
       this.queryInputElement.value = completion.resultQuery;
       this.queryChanged();
       if (completion.forCommand?.executeOnAutoComplete) {
@@ -1094,7 +1118,6 @@ export class NanoApp extends LitElement {
   doPreviousTrack() {
     this.playOpQueue.push(async () => {
       await this.movePlayCursor(-1);
-      this.setPlayState(true);
     });
   }
 
@@ -1102,7 +1125,6 @@ export class NanoApp extends LitElement {
   doNextTrack() {
     this.playOpQueue.push(async () => {
       await this.movePlayCursor(1);
-      this.setPlayState(true);
     });
   }
 
@@ -2374,7 +2396,7 @@ input {
               'special': getChipLabel(c) || false,
             })}
             @click=${(e: MouseEvent) => this.onCompletionChipClicked(e, c)}>
-          <div class="query-completion-chip-label">${c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
+          <div class="query-completion-chip-label">${c.byCommand?.atomPrefix === '←' ? html`<simple-icon style="font-size: 120%;" icon="arrow-left"></simple-icon>` : c.byValue ?? c.byCommand?.atomPrefix ?? '<unknown>'}</div>
           <div class="query-completion-chip-tag">${getChipLabel(c)}</div>
         </div>
       `)}
