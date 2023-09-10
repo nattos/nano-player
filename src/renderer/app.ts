@@ -15,7 +15,7 @@ import { TrackGroupView, TrackGroupViewHost } from './track-group-view';
 import { TrackInsertMarkerView } from './track-insert-marker-view';
 import './simple-icon-element';
 import { Track, SortContext } from './schema';
-import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, ResolvedSubpathInLibraryPath, SearchResultStatus } from './database';
+import { Database, ListPrimarySource, ListSource, QueryToken, QueryTokenAtom, SearchResultStatus } from './database';
 import { MediaIndexer } from './media-indexer';
 import { TrackCursor } from './track-cursor';
 import { CmdLibraryCommands, CmdLibraryPathsCommands, CmdSortTypes, getCommands } from './app-commands';
@@ -23,8 +23,7 @@ import { Playlist, PlaylistManager } from './playlist-manager';
 import { Selection, SelectionMode } from './selection';
 import { ImageCache } from './ImageCache';
 import { getBrowserWindow } from './renderer-ipc';
-import { EvalParams, createEvaluator, createTrackEvaluator } from './code-eval';
-import { PathsDirectoryHandle, PathsHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
+import { PathsDirectoryHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
 import { FileStatus, TranscodeOperation, TranscodeOutput, UserConfirmationState } from './transcode-operation';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
@@ -484,15 +483,18 @@ export class NanoApp extends LitElement {
   @action
   private onWindowKeypress(e: KeyboardEvent) {
     let captured = true;
-    if (e.key === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    console.log(e);
+    const isNoModifier = !e.metaKey && !e.ctrlKey && !e.altKey;
+    const isCtrlOption = e.metaKey || e.ctrlKey || e.altKey;
+    if (e.key === 'z' && (isNoModifier || isCtrlOption)) {
       this.doPreviousTrack();
-    } else if (e.key === 'x' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'x' && (isNoModifier || isCtrlOption)) {
       this.doPlay();
-    } else if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'c' && (isNoModifier || isCtrlOption)) {
       this.doPause();
-    } else if (e.key === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'v' && (isNoModifier || isCtrlOption)) {
       this.doStop();
-    } else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    } else if (e.key === 'b' && (isNoModifier || isCtrlOption)) {
       this.doNextTrack();
     } else if (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       this.doPause();

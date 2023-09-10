@@ -27,7 +27,6 @@
     "electron": "^26.1.0",
     "html-webpack-plugin": "^5.5.3",
     "idb": "^7.1.1",
-    "jsmediatags": "^3.9.7",
     "lit": "^2.8.0",
     "mobx": "^6.10.0",
     "style-loader": "^3.3.3",
@@ -39,6 +38,8 @@
     "webpack-dev-server": "^4.15.1"
   },
   "dependencies": {
+    "ffmpeg": "file:../ffmpeg",
+    "jsmediatags": "file:../jsmediatags",
     "@babel/preset-env": "^7.22.14",
     "@babel/standalone": "^7.22.14",
     "@types/babel__standalone": "^7.1.4",
@@ -47,7 +48,6 @@
     "appdmg": "^0.6.6",
     "electron-settings": "^4.0.2",
     "electron-squirrel-startup": "^1.0.0",
-    "ffmpeg": "^0.0.4",
     "fs": "^0.0.1-security",
     "fs-xattr": "^0.4.0",
     "js-interpreter": "^5.0.0",

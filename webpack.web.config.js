@@ -25,10 +25,12 @@ module.exports = [
       alias: {
         jsmediatags: 'jsmediatags/dist/jsmediatags.min.js',
         'js-interpreter': 'js-interpreter/lib/js-interpreter.min.js',
+        'ffmpeg': false,
       },
       fallback: {
-        "fs": false,
-        "vm": false,
+        'fs': false,
+        'vm': false,
+        'ffmpeg': false,
       },
     },
     externals: {
