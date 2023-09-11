@@ -333,6 +333,24 @@ export function getCommands(app: NanoApp) {
                       func: CommandParser.bindFunc(app.doPlaylistMoveSelected, app, CommandParser.resolveIntegerArg()),
                       suggestEnabledFunc: app.isPlaylistContext.bind(app),
                     },
+                    {
+                      // cmd:selection play-next
+                      name: 'Play next',
+                      desc: 'Add selection to playback queue',
+                      atomPrefix: 'play-next',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doSelectionPlayNext, app),
+                    },
+                    {
+                      // cmd:selection skip
+                      name: 'Skip',
+                      desc: 'Skip playback',
+                      atomPrefix: 'skip',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: CommandParser.bindFunc(app.doSelectionSkipPlayback, app),
+                    },
                     ifElectron({
                       // cmd:selection show-file
                       name: 'Show file',

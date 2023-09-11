@@ -64,6 +64,11 @@ export class NanoApp extends LitElement {
   private readonly trackGroupViewHost: TrackGroupViewHost;
   @observable private trackViewBottomShadeAlpha = 0.0;
 
+  private readonly playbackPlayedQueue: Array<{index: number, track: Track}> = [];
+  private readonly playbackQueue: Array<{index: number, track: Track}> = [];
+  private readonly playbackSkipQueue: Array<{index: number, track: Track}> = [];
+  private playbackQueueWasForward = true;
+
   readonly commandParser = new CommandParser(getCommands(this));
 
   private readonly audioElement = new Audio();
@@ -869,7 +874,7 @@ export class NanoApp extends LitElement {
   @action
   async doSelectionTranscode() {
     const tracks = Array.from(utils.filterNulllike(await this.fetchSelectionTracks()));
-    this.transcodeOperation = new TranscodeOperation(tracks);
+    this.transcodeOperation = new TranscodeOperation(Array.from(utils.filterNulllike(tracks.map(entry => entry.track))));
     this.overlay = Overlay.TranscodeBegin;
     setTimeout(() => {
       if (this.transcodeCodeInputElement) {
@@ -877,6 +882,32 @@ export class NanoApp extends LitElement {
         this.transcodeUpdateCode();
       }
     });
+  }
+
+  @action
+  async doSelectionPlayNext() {
+    const selection = await this.fetchSelectionTracks();
+    for (const entry of selection) {
+      const index = entry.index;
+      const track = entry.track;
+      if (track === undefined) {
+        continue;
+      }
+      this.playbackQueue.push({index, track});
+    }
+  }
+
+  @action
+  async doSelectionSkipPlayback() {
+    const selection = await this.fetchSelectionTracks();
+    for (const entry of selection) {
+      const index = entry.index;
+      const track = entry.track;
+      if (track === undefined) {
+        continue;
+      }
+      this.playbackSkipQueue.push({index, track});
+    }
   }
 
   // Fetches a single track by index from the track view context.
@@ -895,10 +926,10 @@ export class NanoApp extends LitElement {
     return undefined;
   }
 
-  async fetchSelectionTracks(): Promise<Array<Track|undefined>> {
-    const pathPromises: Array<Promise<Track|undefined>> = [];
+  async fetchSelectionTracks(): Promise<Array<{index: number, track: Track|undefined}>> {
+    const pathPromises = [];
     for (const index of this.selection.all) {
-      pathPromises.push(this.fetchTrack(index));
+      pathPromises.push((async () => utils.upcast({index: index, track: await this.fetchTrack(index)}))());
     }
     return await Promise.all(pathPromises);
   }
@@ -947,15 +978,56 @@ export class NanoApp extends LitElement {
       this.playCursor.seek(delta >= 0 ? -Infinity : Infinity);
     }
 
+    if (absPos !== undefined) {
+      this.playbackSkipQueue.splice(0);
+    }
+
+    let didPlaybackDequeue = false;
+    let effectiveDelta = delta;
+    if (absPos === undefined && delta >= 0 && this.playbackQueue.length > 0) {
+      if (!this.playbackQueueWasForward) {
+        const entry = this.playbackQueue.shift()!;
+        this.playbackPlayedQueue.push(entry);
+      }
+      if (this.playbackQueue.length > 0) {
+        didPlaybackDequeue = true;
+        const entry = this.playbackQueue.shift()!;
+        this.playbackPlayedQueue.push(entry);
+        absPos = entry.index;
+        effectiveDelta = 0;
+        this.playbackQueueWasForward = true;
+      }
+    } else if (absPos === undefined && delta < 0 && this.playbackPlayedQueue.length > 0) {
+      if (this.playbackQueueWasForward) {
+        const entry = this.playbackPlayedQueue.pop()!;
+        this.playbackQueue.unshift(entry);
+      }
+      if (this.playbackPlayedQueue.length > 0) {
+        didPlaybackDequeue = true;
+        const entry = this.playbackPlayedQueue.pop()!;
+        this.playbackQueue.unshift(entry);
+        absPos = entry.index;
+        effectiveDelta = 0;
+        this.playbackQueueWasForward = false;
+      }
+    }
+    if (!didPlaybackDequeue) {
+      this.playbackQueue.splice(0);
+      this.playbackPlayedQueue.splice(0);
+      this.playbackQueueWasForward = true;
+    }
+    console.log(this.playbackQueue);
+    console.log(this.playbackPlayedQueue);
+
     const firstResults = this.playCursor.peekRegion(0, 0);
     if (firstResults.updatedResultsPromise) {
       await firstResults.updatedResultsPromise;
     }
     let nextIndex: number;
     if (absPos === undefined) {
-      nextIndex = this.playCursor.index + delta;
+      nextIndex = this.playCursor.index + effectiveDelta;
     } else {
-      nextIndex = Math.max(0, Math.min(this.playCursor.trackCount, absPos)) + delta;
+      nextIndex = Math.max(0, Math.min(this.playCursor.trackCount, absPos)) + effectiveDelta;
     }
     if (nextIndex >= this.playCursor.trackCount) {
       nextIndex -= this.playCursor.trackCount;
@@ -980,6 +1052,16 @@ export class NanoApp extends LitElement {
       }
     }
     this.playCursor.setAnchor(foundTrack ? { index: this.playCursor.index, path: foundTrack.path } : undefined);
+
+    if (foundTrack) {
+      const toPlayIndex = this.playCursor.index!;
+      const skipIndex = utils.indexOf(this.playbackSkipQueue, entry => entry.index === toPlayIndex);
+      if (skipIndex >= 0) {
+        this.playbackSkipQueue.splice(skipIndex, 1);
+        await this.movePlayCursor(delta, undefined, fromSource, loadTrack);
+        return;
+      }
+    }
 
     let fromPlaylist: Playlist|undefined = undefined;
     const resolvedSource = this.resolveSource(this.playCursor.source);
@@ -1045,6 +1127,10 @@ export class NanoApp extends LitElement {
     const updatedResults = await this.playCursor?.peekRegion(0, 0)?.updatedResultsPromise;
     if (updatedResults) {
       if (updatedResults.rebasedDelta !== undefined) {
+        this.playbackQueue.splice(0);
+        this.playbackPlayedQueue.splice(0);
+        this.playbackSkipQueue.splice(0);
+        this.playbackQueueWasForward = true;
         this.updateTrackDataInViewport();
       }
       const tracks = Array.from(updatedResults.results ?? []);

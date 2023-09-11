@@ -411,6 +411,17 @@ export function rectContains(rect: DOMRectReadOnly, point: Point2D): boolean {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
 }
 
+export function indexOf<TValue>(values: Iterable<TValue>, predicate: (entry: TValue) => boolean): number {
+  let index = 0;
+  for (const value of values) {
+    if (predicate(value)) {
+      return index;
+    }
+    index++;
+  }
+  return -1;
+}
+
 export function* mapAll<TIn, TOut>(values: Iterable<TIn>, callback: (value: TIn) => Iterable<TOut>|undefined) {
   for (const value of values) {
     const valueResult = callback(value);
