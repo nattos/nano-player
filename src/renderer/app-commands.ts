@@ -160,6 +160,15 @@ export function getCommands(app: NanoApp) {
               func: app.doNextTrack.bind(app),
             },
             {
+              // cmd:stop-after
+              name: 'Stop after',
+              desc: 'Stops after the current track or playback queue ends.',
+              atomPrefix: 'stop-after',
+              argSpec: [],
+              executeOnAutoComplete: true,
+              func: app.doSetStopAfter.bind(app),
+            },
+            {
               // cmd:library <show>
               name: 'Main library commands',
               desc: '...',
@@ -350,6 +359,15 @@ export function getCommands(app: NanoApp) {
                       argSpec: [],
                       executeOnAutoComplete: true,
                       func: CommandParser.bindFunc(app.doSelectionSkipPlayback, app),
+                    },
+                    {
+                      // cmd:stop-after
+                      name: 'Stop after',
+                      desc: 'Stops after the selection.',
+                      atomPrefix: 'stop-after',
+                      argSpec: [],
+                      executeOnAutoComplete: true,
+                      func: app.doSetStopAfterSelection.bind(app),
                     },
                     ifElectron({
                       // cmd:selection show-file

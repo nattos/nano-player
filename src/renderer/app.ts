@@ -68,6 +68,7 @@ export class NanoApp extends LitElement {
   private readonly playbackQueue: Array<{index: number, track: Track}> = [];
   private readonly playbackSkipQueue: Array<{index: number, track: Track}> = [];
   private playbackQueueWasForward = true;
+  private playbackStopAfter = false;
 
   readonly commandParser = new CommandParser(getCommands(this));
 
@@ -910,6 +911,12 @@ export class NanoApp extends LitElement {
     }
   }
 
+  @action
+  doSetStopAfterSelection() {
+    this.playbackStopAfter = true;
+    this.doSelectionPlayNext();
+  }
+
   // Fetches a single track by index from the track view context.
   async fetchTrack(index: number): Promise<Track|undefined> {
     const op = this.trackViewCursor!.peekRegion(index, index, true);
@@ -1015,6 +1022,7 @@ export class NanoApp extends LitElement {
       this.playbackQueue.splice(0);
       this.playbackPlayedQueue.splice(0);
       this.playbackQueueWasForward = true;
+      this.playbackStopAfter = false;
     }
     console.log(this.playbackQueue);
     console.log(this.playbackPlayedQueue);
@@ -1212,6 +1220,21 @@ export class NanoApp extends LitElement {
     this.playOpQueue.push(async () => {
       await this.movePlayCursor(1);
     });
+  }
+
+  @action
+  doAutoNextTrack() {
+    if (this.playbackStopAfter && this.playbackQueue.length === 0) {
+      this.playbackStopAfter = false;
+      this.doStop();
+      return;
+    }
+    this.doNextTrack();
+  }
+
+  @action
+  doSetStopAfter() {
+    this.playbackStopAfter = true;
   }
 
   @action
@@ -1760,7 +1783,7 @@ export class NanoApp extends LitElement {
   }
 
   private onAudioEnded() {
-    this.doNextTrack();
+    this.doAutoNextTrack();
   }
 
   private onAudioLoadStart() {
