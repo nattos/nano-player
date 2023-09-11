@@ -762,7 +762,7 @@ export class NanoApp extends LitElement {
     const clientRect = this.trackListView.getBoundingClientRect();
     const maxIndex = Math.max(0, this.trackListView.totalCount - 1);
     const viewportX = pageX - clientRect.left;
-    const viewportY = pageY - clientRect.left;
+    const viewportY = pageY - clientRect.top;
     const fineIndex = this.trackListView.viewportPointToFineTrackIndex(viewportX, viewportY);
     let closestIndex = Math.floor(fineIndex);
     let afterIndex;
