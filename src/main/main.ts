@@ -8,12 +8,19 @@ interface AppSettings {
   windowHeight?: number;
 }
 
+interface StyleSettings {
+  baseCss?: string;
+  detailCss?: string;
+}
+
 
 let mainWindow: BrowserWindow;
 let appSettings: AppSettings;
+let styleSettings: StyleSettings;
 
 async function createWindow() {
   appSettings = await settings.get('app-settings') as AppSettings ?? {};
+  styleSettings = await settings.get('style-settings') as StyleSettings ?? {};
 
   const windowWidth = appSettings.windowWidth ?? 940;
   const windowHeight = appSettings.windowHeight ?? 1024;
@@ -71,6 +78,14 @@ ipcMain.handle('browserWindow.showDirectoryPicker', async () => {
   }
 });
 
+ipcMain.handle('browserWindow.getCustomStyles', () => [styleSettings.baseCss, styleSettings.detailCss]);
+ipcMain.handle('browserWindow.setCustomStyles', (e, styles: [string|undefined, string|undefined]) => {
+  const [baseCss, detailCss] = styles;
+  styleSettings.baseCss = baseCss;
+  styleSettings.detailCss = detailCss;
+  // Sync in background.
+  settings.set('style-settings', styleSettings as {});
+});
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling');

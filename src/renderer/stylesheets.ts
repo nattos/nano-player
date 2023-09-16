@@ -1,6 +1,8 @@
 import 'line-awesome/dist/line-awesome/css/line-awesome.css';
 import * as utils from '../utils';
+import * as environment from './environment'
 import { css } from 'lit';
+import { getBrowserWindow } from './renderer-ipc';
 
 function toStyleSheet(styleElement: HTMLStyleElement): CSSStyleSheet {
   const styleSheet = new CSSStyleSheet();
@@ -14,8 +16,17 @@ let userBaseConfigStyleSheet: CSSStyleSheet|undefined;
 let userDetailConfigStyleSheet: CSSStyleSheet|undefined;
 
 export async function loadConfig() {
-  userBaseConfigStyleSheet = (css({raw: [DEFAULT_BASE_CUSTOM_CSS], ...[DEFAULT_BASE_CUSTOM_CSS]})).styleSheet;
-  userDetailConfigStyleSheet = (css({raw: [DEFAULT_DETAIL_CUSTOM_CSS], ...[DEFAULT_DETAIL_CUSTOM_CSS]})).styleSheet;
+  if (environment.isElectron()) {
+    const [baseCss, detailCss] = await getBrowserWindow()!.getCustomStyles();
+    if (baseCss) {
+      userBaseConfigStyleSheet = (css({raw: [baseCss], ...[baseCss]})).styleSheet;
+    }
+    if (detailCss) {
+      userDetailConfigStyleSheet = (css({raw: [detailCss], ...[detailCss]})).styleSheet;
+    }
+  }
+  userBaseConfigStyleSheet ??= (css({raw: [DEFAULT_BASE_CUSTOM_CSS], ...[DEFAULT_BASE_CUSTOM_CSS]})).styleSheet;
+  userDetailConfigStyleSheet ??= (css({raw: [DEFAULT_DETAIL_CUSTOM_CSS], ...[DEFAULT_DETAIL_CUSTOM_CSS]})).styleSheet;
 }
 
 export function getBaseUserConfigStyleSheet(): CSSStyleSheet {

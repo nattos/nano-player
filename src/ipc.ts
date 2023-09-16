@@ -5,4 +5,7 @@ export interface BrowserWindow {
 
   showFileInBrowser(absPath: string): void;
   showDirectoryPicker(): Promise<string|undefined>;
+
+  getCustomStyles(): Promise<[string|undefined, string|undefined]>;
+  setCustomStyles(styles: [string|undefined, string|undefined]): void;
 }
