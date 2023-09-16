@@ -5,9 +5,6 @@ import { adoptCommonStyleSheets } from './stylesheets';
 
 @customElement('track-insert-marker-view')
 export class TrackInsertMarkerView extends LitElement {
-  static styles = css`
-`;
-
   override connectedCallback(): void {
     super.connectedCallback();
     adoptCommonStyleSheets(this);

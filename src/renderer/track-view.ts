@@ -36,10 +36,6 @@ interface ExtendedMetadata {
 
 @customElement('track-view')
 export class TrackView extends LitElement {
-  static styles = css`
-
-`;
-
   @property() index = 0;
   @property() track?: Track;
   @property() selected = false;

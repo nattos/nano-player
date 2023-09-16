@@ -1,6 +1,10 @@
 import { NanoApp } from './app';
-import './stylesheets';
+import * as stylesheets from './stylesheets';
 
-document.body.appendChild(new NanoApp());
+(async () => {
+  await stylesheets.loadConfig();
+  document.adoptedStyleSheets = document.adoptedStyleSheets.concat([stylesheets.getBaseUserConfigStyleSheet(), stylesheets.getUserDetailConfigStyleSheet()]);
+  document.body.appendChild(new NanoApp());
+})();
 
 export const instance = NanoApp.instance;
