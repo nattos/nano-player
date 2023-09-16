@@ -7,8 +7,8 @@ import { action } from 'mobx';
 import * as utils from '../utils';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
-import { Database } from './database';
 import { ImageCache } from './ImageCache';
+import { adoptCommonStyleSheets } from './stylesheets';
 
 export interface TrackGroupViewHost {
   doPlayTrackGroupView(groupView: TrackGroupView): void;
@@ -17,47 +17,17 @@ export interface TrackGroupViewHost {
 
 @customElement('track-group-view')
 export class TrackGroupView extends LitElement {
-  static styles = css`
-.click-target {
-  user-select: none;
-  cursor: pointer;
-}
-
-.group {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  gap: 1em;
-  white-space: nowrap;
-  user-select: none;
-  pointer-events: none;
-}
-.group-head {
-  position: relative;
-  width: var(--theme-row-group-head-width);
-  overflow: hidden;
-  background: linear-gradient(180deg, var(--theme-row-even-bg), var(--theme-row-even-bg) 0.2em, transparent 0.2em, transparent);
-  pointer-events: auto;
-}
-.artwork {
-  position: absolute;
-  top: 0.66em;
-  left: 0.66em;
-  right: 0.66em;
-  aspect-ratio: 1 / 1;
-  overflow: hidden;
-  background-color: var(--theme-bg2);
-  background-position: center;
-  background-size: cover;
-}
-`;
-
   @property() startIndex = 0;
   @property() endIndex = 0;
   @property() track?: Track;
   @property() imageUrl?: string;
   host?: TrackGroupViewHost;
   private imageLoadEpoch = 0;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    adoptCommonStyleSheets(this);
+  }
 
   clicked(e: MouseEvent) {
     if (e.button !== 0) {
@@ -76,10 +46,10 @@ export class TrackGroupView extends LitElement {
 
   override render() {
     return html`
-<div class="group">
-  <div class="group-head">
+<div class="track-group">
+  <div class="track-group-head">
     <div
-        class="artwork click-target"
+        class="track-group-artwork click-target"
         @mousedown=${this.clicked}
         @dblclick=${this.dblclick}
         style=${styleMap({

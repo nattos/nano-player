@@ -467,6 +467,19 @@ export function* range(countOrMin: number, count?: number): Iterable<number> {
   }
 }
 
+export function* appendIfMissing<T>(values: Iterable<T>, toAdd: T) {
+  let found = false;
+  for (const value of values) {
+    yield value;
+    if (value === toAdd) {
+      found = true;
+    }
+  }
+  if (!found) {
+    yield toAdd;
+  }
+}
+
 export function setAddRange<T>(set: Set<T>, values: Iterable<T>) {
   for (const value of values) {
     set.add(value);

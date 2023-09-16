@@ -26,6 +26,7 @@ import { getBrowserWindow } from './renderer-ipc';
 import { PathsDirectoryHandle, createUrl, handlesFromDataTransfer, revokeUrl, showDirectoryPicker } from './paths';
 import { FileStatus, TranscodeOperation, TranscodeOutput, UserConfirmationState } from './transcode-operation';
 import { PointerDragOp } from './pointer-drag-op';
+import { adoptCommonStyleSheets } from './stylesheets';
 
 RecyclerView; // Necessary, possibly beacuse RecyclerView is templated?
 
@@ -117,6 +118,7 @@ export class NanoApp extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    adoptCommonStyleSheets(this);
 
     navigator.mediaSession.setActionHandler('play', this.doPlay.bind(this));
     navigator.mediaSession.setActionHandler('pause', this.doPause.bind(this));
@@ -1842,425 +1844,17 @@ export class NanoApp extends LitElement {
     this.setPlayPosition(fraction);
   }
 
-  static styles = css`
-.hidden {
-  visibility: hidden;
-}
-
-.click-target {
-  user-select: none;
-  cursor: pointer;
-}
-
-.outer {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-flow: column;
-}
-.outer.window-deactive {
-}
-
-.code {
-  white-space: pre;
-  font-family: Monaco, monospace;
-  font-size: 80%;
-}
-
-.horizontal-divider {
-  background-color: var(--theme-color3);
-  height: 0.5px;
-}
-
-.window-title-bar {
-  position: relative;
-  height: 36px;
-  width: 100%;
-  user-select: none;
-  -webkit-app-region: drag;
-  color: var(--theme-fg3);
-}
-.window-title-divider {
-  position: absolute;
-  bottom: 0;
-  height: 1px;
-  left: 0;
-  right: 0;
-  background-color: var(--theme-bg2);
-}
-.outer.window-deactive > .window-title-bar {
-  color: var(--theme-fg4);
-}
-.window-title-text-container {
-  --left-inset: max(var(--theme-row-group-head-width), 80px);
-  display: flex;
-  position: absolute;
-  left: var(--left-inset);
-  top: 0px;
-  bottom: 0px;
-  width: fit-content;
-  max-width: calc(100% - var(--left-inset));
-  align-items: center;
-  gap: 1em;
-  justify-content: flex-start;
-  flex-wrap: nowrap;
-}
-.window-title-text-part {
-  flex: 1 1 auto;
-  text-wrap: nowrap;
-  text-overflow: ellipsis;
-  letter-spacing: var(--theme-letter-spacing-wide);
-  font-size: 85%;
-  overflow: hidden;
-}
-.window-title-text-part:empty {
-  display: none;
-}
-
-.track-view-area {
-  flex-grow: 1;
-  height: 0;
-  position: relative;
-}
-.track-view {
-}
-
-.player {
-  position: relative;
-  flex: none;
-  background-color: var(--theme-bg2);
-  width: 100%;
-  height: var(--player-height);
-  display: grid;
-  grid-auto-columns: auto minmax(0, 1fr) auto;
-  grid-auto-rows: 0.6fr 1fr;
-}
-.player-divider {
-  position: absolute;
-  top: -1px;
-  height: 1px;
-  left: 0;
-  right: 0;
-  background-color: var(--theme-bg2);
-}
-.player-top-shade {
-  position: absolute;
-  bottom: 0;
-  height: 3em;
-  left: 0;
-  right: 0;
-  background: linear-gradient(0deg, color-mix(in srgb, transparent, var(--theme-bg4) 30%) 0%, transparent 100%);
-  pointer-events: none;
-}
-.player-artwork {
-  position: relative;
-  height: var(--player-height);
-  width: var(--player-height);
-  background-color: var(--theme-bg3);
-  grid-area: 1 / 1 / span 2 / span 1;
-  background-position: center;
-  background-size: cover;
-}
-.player-artwork-expand-overlay {
-  position: absolute;
-  bottom: 0;
-  top: 0;
-  left: 0;
-  right: 0;
-  opacity: 0;
-}
-.player-artwork-expand-overlay:hover {
-  opacity: 1;
-}
-.player-artwork-expand-button {
-  position: absolute;
-  bottom: 0.2em;
-  right: 0.2em;
-  height: 2em;
-  width: 2em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: var(--theme-bg4);
-  opacity: 0.5;
-}
-.player-artwork-expand-button:hover {
-  opacity: 1.0;
-}
-.player-info {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  margin: 0 1em;
-  gap: 1em;
-}
-.player-info > div {
-  flex-shrink: 1;
-  flex-grow: 1;
-  flex-basis: auto;
-  text-wrap: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-}
-.player-title {}
-.player-artist {}
-.player-album {}
-.player-seekbar {
-  grid-area: 2 / 2 / span 1 / span 3;
-  background-color: var(--theme-bg2);
-}
-.player-seekbar-bar {
-  height: 100%;
-  background-color: var(--theme-color4);
-}
-.player-controls {
-  display: flex;
-  margin: 0 3em 0 1em;
-  align-items: stretch;
-  justify-content: flex-end;
-  width: 15em;
-  white-space: nowrap;
-}
-
-.small-button {
-  display: flex;
-  flex-grow: 1;
-}
-.small-button:hover {
-  background-color: var(--theme-color4);
-}
-.player-controls-button-text {
-  margin: auto;
-  letter-spacing: var(--theme-letter-spacing-button);
-}
-.small-button simple-icon {
-  margin: auto;
-}
-simple-icon.green {
-  color: green;
-}
-simple-icon.red {
-  color: red;
-}
-
-.query-container {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-order: 50;
-}
-
-.query-input-underlay {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background-color: var(--theme-bg4);
-  opacity: 0.5;
-  user-select: none;
-  pointer-events: auto;
-}
-
-.query-input-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-flow: column;
-}
-
-.query-input-area {
-  position: relative;
-  height: 4em;
-  background-color: var(--theme-bg);
-  margin: 2em 10em;
-  min-width: 300px;
-  border-radius: 2em;
-  border: solid var(--theme-fg2) 1px;
-  pointer-events: auto;
-}
-
-.query-input-icon {
-  position: absolute;
-  top: 50%;
-  left: 2.5em;
-  transform: translate(-100%, -50%);
-}
-
-.query-input {
-  position: relative;
-  bottom: 0.075em;
-  width: calc(100% - 3em);
-  height: 100%;
-  font-size: 200%;
-  background-color: transparent;
-  margin: 0px 1.5em;
-}
-
-input {
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-weight: 300;
-  color: var(--theme-fg);
-  background-color: var(--theme-bg);
-  font-size: var(--theme-font-size);
-  outline: none;
-  border: none;
-}
-
-.query-completion-area {
-  display: flex;
-  justify-content: center;
-  gap: 1em;
-  font-size: 200%;
-  flex-flow: wrap;
-  width: 80%;
-  align-self: center;
-  align-items: center;
-}
-
-.query-completion-chip {
-  overflow: hidden;
-  text-wrap: nowrap;
-  text-overflow: ellipsis;
-  background-color: var(--theme-color2);
-  border-radius: 1.5em;
-  padding: 0.5em 1em;
-  pointer-events: auto;
-}
-
-.query-completion-chip:hover {
-  background-color: var(--theme-color4);
-}
-
-.query-completion-chip.special {
-  background-color: var(--theme-color3);
-}
-
-.query-completion-chip.special:hover {
-  background-color: var(--theme-color4);
-}
-
-.query-completion-chip-label {
-}
-
-.query-completion-chip-tag {
-  font-size: 40%;
-  letter-spacing: var(--theme-letter-spacing-wide);
-  font-weight: 400;
-}
-
-
-.overlay-container {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-}
-.overlay-underlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--theme-bg4);
-  opacity: 0.66;
-  user-select: none;
-  pointer-events: auto;
-}
-.overlay-content {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-}
-.overlay-album-art-content {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  max-width: 70%;
-  min-width: 30%;
-  min-height: 30%;
-  object-fit: contain;
-  background-color: var(--theme-bg4);
-  transform: translate(-50%, -50%);
-  pointer-events: auto;
-}
-
-.screaming-headline-text {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  max-width: 70%;
-  min-height: 30%;
-  transform: translate(-50%, -50%);
-  font-size: 400%;
-  text-align: center;
-}
-.screaming-headline-text simple-icon {
-  font-size: 200%;
-}
-
-.dialog {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 80%;
-  height: 80%;
-  display: grid;
-  grid-auto-columns: 1fr auto;
-  grid-auto-rows: max-content 1fr;
-  background-color: var(--theme-bg2);
-  pointer-events: auto;
-}
-.dialog-close-button {
-  grid-area: 1 / 2 / span 1 / span 1;
-  display: flex;
-  width: 3em;
-  height: 2em;
-}
-.dialog-title {
-  grid-area: 1 / 1 / span 1 / span 1;
-  margin-top: auto;
-  margin-bottom: auto;
-  margin-left: 0.25em;
-}
-.dialog-content {
-  grid-area: 2 / 1 / span 1 / span 2;
-  margin-left: 0.25em;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-
-  `;
-
   renderInner() {
     return html`
 <div
     class=${classMap({
-      'outer': true,
+      'app': true,
       'window-active': this.windowActive,
       'window-deactive': !this.windowActive,
     })}>
   ${this.renderTitleBar()}
-  <div class="track-view-area">
-    <recycler-view class="track-view" id="track-list-view"></recycler-view>
+  <div class="tracks-view-area">
+    <recycler-view class="tracks-view" id="track-list-view"></recycler-view>
     ${this.renderQueryOverlay()}
     ${this.renderOverlay()}
   </div>
@@ -2287,12 +1881,12 @@ input {
       <div class="player-album">${this.currentPlayTrack?.metadata?.album}</div>
     </div>
     <div class="player-controls">
-      <span class="small-button click-target" @click=${this.doPreviousTrack}><div class="player-controls-button-text"><simple-icon icon="step-backward"></simple-icon></div></span>
-      <span class="small-button click-target" @click=${this.doPlay}><div class="player-controls-button-text"><simple-icon icon="play"></simple-icon></div></span>
-      <span class="small-button click-target" @click=${this.doPause}><div class="player-controls-button-text"><simple-icon icon="pause"></simple-icon></div></span>
-      <span class="small-button click-target" @click=${this.doStop}><div class="player-controls-button-text"><simple-icon icon="stop"></simple-icon></div></span>
-      <span class="small-button click-target" @click=${this.doNextTrack}><div class="player-controls-button-text"><simple-icon icon="step-forward"></simple-icon></div></span>
-      <span class="small-button click-target" @click=${() => {this.doToggleQueryInputField();}}><div class="player-controls-button-text"><simple-icon icon="bolt"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doPreviousTrack}><div class="small-button-text"><simple-icon icon="step-backward"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doPlay}><div class="small-button-text"><simple-icon icon="play"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doPause}><div class="small-button-text"><simple-icon icon="pause"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doStop}><div class="small-button-text"><simple-icon icon="stop"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${this.doNextTrack}><div class="small-button-text"><simple-icon icon="step-forward"></simple-icon></div></span>
+      <span class="small-button click-target" @click=${() => {this.doToggleQueryInputField();}}><div class="small-button-text"><simple-icon icon="bolt"></simple-icon></div></span>
     </div>
     <div
         id="player-seekbar"

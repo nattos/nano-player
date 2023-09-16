@@ -1,7 +1,6 @@
-import { html, css, LitElement, PropertyValueMap } from 'lit';
+import { html, css, LitElement } from 'lit';
 import {} from 'lit/html';
 import { customElement, property } from 'lit/decorators.js';
-import { NanoApp } from './app';
 import { getLineAwesomeStyleSheet } from './stylesheets';
 import { classMap } from 'lit/directives/class-map.js';
 import * as utils from '../utils';

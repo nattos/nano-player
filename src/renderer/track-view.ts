@@ -8,6 +8,7 @@ import './simple-icon-element';
 import { Track } from './schema';
 import { SelectionMode } from './selection';
 import { PointerDragOp } from './pointer-drag-op';
+import { adoptCommonStyleSheets } from './stylesheets';
 
 export interface ListPos {
   afterIndex: number;
@@ -36,150 +37,7 @@ interface ExtendedMetadata {
 @customElement('track-view')
 export class TrackView extends LitElement {
   static styles = css`
-.click-target {
-  user-select: none;
-  cursor: pointer;
-}
-.hidden {
-  display: none;
-}
 
-.row {
-  position: relative;
-  display: flex;
-  width: calc(100% - 2px - var(--theme-row-group-head-width));
-  height: calc(100% - 2px);
-  left: var(--theme-row-group-head-width);
-  gap: 1em;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: space-evenly;
-  white-space: nowrap;
-  user-select: none;
-  border: solid 1px;
-  border-color: transparent;
-  background-color: var(--theme-row-odd-bg);
-}
-.row.even {
-  background-color: var(--theme-row-even-bg);
-}
-.row.playing {
-}
-.row.highlighted {
-  border-color: var(--theme-hi-border);
-}
-.row.selected {
-  background-color: var(--theme-hi-bg);
-}
-.col-group-head {
-  width: var(--theme-row-group-head-width);
-}
-.col-index {
-  flex-grow: 0.1;
-  width: 3em;
-  overflow: hidden;
-  text-align: right;
-}
-.col-title {
-  flex-grow: 15;
-  width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.col-artist {
-  flex-grow: 10;
-  width: 0;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-.col-album {
-  flex-grow: 10;
-  width: 0;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-.col-duration {
-  flex-grow: 2;
-  width: 0;
-  overflow:hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-.col-track-number {
-  flex-grow: 2;
-  width: 0;
-  overflow:hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-.col-index-key {
-  flex-grow: 10;
-  width: 0;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-.col-path-part {
-  flex-grow: 0.1;
-  width: 3em;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-.col-codec {
-  flex-grow: 1;
-  width: 3em;
-  overflow:hidden;
-  text-overflow: ellipsis;
-}
-
-.row-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  user-select: none;
-  pointer-events: auto;
-  opacity: 0.0;
-}
-.row-overlay:hover {
-  opacity: 1.0;
-}
-.row-controls-container {
-  position: absolute;
-  top: -0.25em;
-  right: 1.5em;
-  bottom: -0.25em;
-  pointer-events: auto;
-}
-.row-controls {
-  z-index: 2;
-  position: relative;
-  display: flex;
-  height: 100%;
-  align-items: stretch;
-}
-.row-controls-underlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--theme-bg3);
-  opacity: 1.0;
-  z-index: 1;
-}
-
-.small-button {
-  display: flex;
-  aspect-ratio: 1 / 1;
-}
-.small-button:hover {
-  background-color: var(--theme-color4);
-}
-.small-button-text {
-  margin: auto;
-  letter-spacing: var(--theme-letter-spacing-button);
-}
 `;
 
   @property() index = 0;
@@ -194,6 +52,11 @@ export class TrackView extends LitElement {
   private rangeSelectOp?: PointerDragOp;
   private dragMoveOp?: PointerDragOp;
   private dragMoveDidStart = false;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    adoptCommonStyleSheets(this);
+  }
 
   clicked(e: PointerEvent) {
     if (e.button !== 0) {
@@ -343,7 +206,7 @@ export class TrackView extends LitElement {
     return html`
 <div
     class=${classMap({
-      'row': true,
+      'track-view': true,
       'even': (this.index % 2) === 0,
       'playing': this.playing,
       'selected': this.selected,
@@ -364,17 +227,17 @@ export class TrackView extends LitElement {
   <div class="col-codec">${this.extendedMetadata.codec}</div>
   <div
       class=${classMap({
-        'row-overlay': true,
+        'track-view-overlay': true,
         'hidden': !(this.selected && this.highlighted && this.showReorderControls),
       })}>
     <div
-        class="row-controls-container"
+        class="track-view-controls-container"
         @mousedown=${this.doStopPropagation}
         @pointerdown=${this.doStopPropagation}
         @click=${this.doStopPropagation}
         @dblclick=${this.doStopPropagation}>
-      <div class="row-controls-underlay"></div>
-      <div class="row-controls">
+      <div class="track-view-controls-underlay"></div>
+      <div class="track-view-controls">
         <span class="small-button click-target" @click=${this.doMoveAccept}><div class="small-button-text"><simple-icon icon="check-circle"></simple-icon></div></span>
         <span class="small-button click-target" @click=${this.doMoveCancel}><div class="small-button-text"><simple-icon icon="times-circle"></simple-icon></div></span>
         <span class="small-button click-target" @click=${this.doMoveUp}><div class="small-button-text"><simple-icon icon="arrow-circle-up"></simple-icon></div></span>
